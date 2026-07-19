@@ -37,7 +37,7 @@ Chosen direction: **balanced hybrid** on the Arc↔Zen spectrum.
 The brand mark is Evo's app icon: a luminous **cyan→violet gradient orb** on deep near-black. This drives two things:
 
 - The **default (Agent) accent** is that cyan→violet gradient (`#57dcd6 → #8f7bf3`).
-- The **orb is a reusable motif** representing AI/Agent presence — it appears, scaled down, wherever Evo is thinking or listening: the AI panel header, the command bar's "Ask Evo" row, agent status, and the new-tab hero. The shipping kit uses the real icon artwork for the mark; a CSS approximation is acceptable only inside Storybook mockups.
+- The **orb is a reusable motif** representing AI/Agent presence — it appears, scaled down, wherever Evo is thinking or listening: the AI panel header, the command bar's "Ask Evo" row, agent status, and the new-tab hero. The shipping kit uses the **real icon artwork** for the mark — the exported asset lives at the repo root as `evo-browser-icon-1024.png` and is copied into the package's `src/brand/assets/`. The brand mark's cyan→violet is a **fixed constant**; per-space accent themes the surrounding chrome, not the mark. (A CSS approximation of the orb is acceptable only as a fallback inside Storybook mockups.)
 
 ### Per-space accent model
 
@@ -117,5 +117,5 @@ Build order follows the grouping: primitives → shell → command bar → AI pa
 
 ## Open questions
 
-- Exact file/location of the Evo app-icon artwork to embed as the brand mark.
+- Whether the small in-UI agent presence (agent status dot, "Ask Evo" glyph) stays the fixed brand cyan→violet or tints to the active Space accent. Default assumption: brand-fixed, with an optional `tint` prop.
 - Whether the `LeftRail` (Arc-style icon rail) is in the shipping Evo UX or purely a mockup affordance — spec includes it as a component; product decision can drop it later.

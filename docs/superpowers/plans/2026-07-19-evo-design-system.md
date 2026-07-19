@@ -51,7 +51,8 @@ evo-design-system/
     command/  ... (CommandBar, CommandResultRow, ...)
     ai/       ... (AIPanel, Message, Composer, AgentOrb, ...)
     brand/
-      AgentOrb.tsx AgentOrb.module.css   # CSS orb stand-in; real icon asset dropped in later
+      assets/evo-icon.png                # copied from repo-root evo-browser-icon-1024.png
+      AgentOrb.tsx AgentOrb.module.css   # renders the real icon asset (CSS orb = fallback only)
       Wordmark.tsx
     scenes/
       Window.scene.stories.tsx
@@ -828,19 +829,40 @@ describe("ListRow", () => {
 
 ## Task 11: `AgentOrb` + `Wordmark` (brand)
 
-**Files:** `src/brand/AgentOrb/` (`AgentOrb.tsx`, `.module.css`, `.stories.tsx`, `.test.tsx`), `src/brand/Wordmark/`.
+**Files:** `src/brand/assets/evo-icon.png` (copied from repo root), `src/brand/AgentOrb/` (`AgentOrb.tsx`, `.module.css`, `.stories.tsx`, `.test.tsx`), `src/brand/Wordmark/`.
 
 **Interfaces:**
-- `AgentOrb({ size?: number; state?: "idle" | "thinking" | "listening" })` — the cyan→violet orb (CSS stand-in for the real app icon). `thinking` adds a slow bloom pulse (`--dur-slow`). Consumed by `AIPanelHeader`, `AskEvoRow`, `AgentStatus`.
+- `AgentOrb({ size?: number; state?: "idle" | "thinking" | "listening"; tint?: boolean })` — renders the **real exported icon** (`evo-icon.png`) at `size`. `thinking` adds a slow accent bloom pulse behind the mark (`--dur-slow`). The mark itself is the fixed brand cyan→violet; `tint` (default `false`) is the escape hatch to recolor the surrounding glow to `--accent-1/2` for non-Agent Spaces (per the spec's open question). Consumed by `AIPanelHeader`, `AskEvoRow`, `AgentStatus`.
 - `Wordmark({ height?: number })` — "Evo" wordmark beside the orb.
-- Note (from spec): real icon artwork replaces the CSS orb when its file is located; keep the API stable so the swap is internal.
 
-- [ ] **Step 1: Smoke test** — `AgentOrb` renders (query by `data-testid="agent-orb"`); `thinking` adds the pulsing class.
-- [ ] **Step 2: Run — verify fail.** `cd evo-design-system && npm test -- AgentOrb` → FAIL.
-- [ ] **Step 3: Implement `AgentOrb`** using the layered radial/conic technique from the v2 mockup (ring + core + bloom), driven by `--accent-1/2/core` so non-Agent Spaces recolor the orb. Implement `Wordmark`.
-- [ ] **Step 4: Stories** — orb at 3 sizes × 3 states; Wordmark.
-- [ ] **Step 5: Run test + Storybook build** → PASS + builds.
-- [ ] **Step 6: Commit.** `git add evo-design-system/src/brand && git commit -m "feat(design-system): AgentOrb + Wordmark brand motif"`
+- [ ] **Step 1: Copy the asset**
+
+Run: `cp evo-browser-icon-1024.png evo-design-system/src/brand/assets/evo-icon.png`
+(Add a Vite/TS image module declaration if needed: `declare module "*.png";` in `src/vite-env.d.ts`.)
+
+- [ ] **Step 2: Smoke test** — `AgentOrb` renders an `<img>` (query by `data-testid="agent-orb"` with the image inside); `thinking` adds the pulsing class.
+
+```tsx
+import { describe, it, expect } from "vitest";
+import { screen } from "@testing-library/react";
+import { renderWithTheme } from "../../test/renderWithTheme";
+import { AgentOrb } from "./AgentOrb";
+
+describe("AgentOrb", () => {
+  it("renders the brand mark and reflects the thinking state", () => {
+    renderWithTheme(<AgentOrb state="thinking" />);
+    const orb = screen.getByTestId("agent-orb");
+    expect(orb.querySelector("img")).toBeTruthy();
+    expect(orb.className).toMatch(/thinking/);
+  });
+});
+```
+
+- [ ] **Step 3: Run — verify fail.** `cd evo-design-system && npm test -- AgentOrb` → FAIL.
+- [ ] **Step 4: Implement `AgentOrb`** — an `<img src={evoIcon}>` wrapped in a positioned container with a `thinking` bloom (an accent-colored blurred halo behind the mark, sized from `size`). The `bloom`/`tint` glow reads `--accent-1/2`; the icon image is untouched (brand-fixed). Implement `Wordmark`.
+- [ ] **Step 5: Stories** — orb at 3 sizes × 3 states; a `tint` variant shown under a non-Agent Space; Wordmark.
+- [ ] **Step 6: Run test + Storybook build** → PASS + builds. Confirm the real icon renders crisply and the thinking bloom animates.
+- [ ] **Step 7: Commit.** `git add evo-design-system/src/brand && git commit -m "feat(design-system): AgentOrb (real icon) + Wordmark brand motif"`
 
 ---
 
