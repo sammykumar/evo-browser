@@ -10,3 +10,6 @@
 # Local reports and editor state.
 /artifacts/
 *.log
+
+# Superpowers scratch (brainstorm mockups, subagent state).
+/.superpowers/
