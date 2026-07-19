@@ -1,7 +1,7 @@
 From fd38fef0604ac998c5227c16c0c22798636c5b51 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 18 Jul 2026 17:19:17 -0500
-Subject: [PATCH 06/12] evo: document EvoWork parity backlog
+Subject: [PATCH 06/17] evo: document EvoWork parity backlog
 
 ---
  evo/BACKLOG.md                                | 133 ++++++++
