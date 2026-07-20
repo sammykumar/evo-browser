@@ -1,7 +1,7 @@
 From 3222166c1db5aaf6c201f64b2628ea382f07afa5 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 18 Jul 2026 16:31:46 -0500
-Subject: [PATCH 04/18] evo: add page-aware AI and MCP entry points
+Subject: [PATCH 04/22] evo: add page-aware AI and MCP entry points
 
 ---
  chrome/app/chrome_command_ids.h               |   3 +

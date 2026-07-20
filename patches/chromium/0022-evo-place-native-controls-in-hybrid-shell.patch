@@ -1,0 +1,68 @@
+From 9b7ca18e3605a033cd1ddb85a50bc1088f00f603 Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Mon, 20 Jul 2026 17:22:04 -0500
+Subject: [PATCH 22/22] evo: place native controls in hybrid shell
+
+---
+ .../ui/views/frame/browser_frame_view_mac.mm      | 15 +++++++++++++++
+ chrome/browser/ui/views/frame/browser_view.cc     |  1 +
+ 2 files changed, 16 insertions(+)
+
+diff --git a/chrome/browser/ui/views/frame/browser_frame_view_mac.mm b/chrome/browser/ui/views/frame/browser_frame_view_mac.mm
+index 624c29498f8dbab4df678e97f791e951f1439aa3..59094d7b3b79c716c20354a2410b5a72668d9e89 100644
+--- a/chrome/browser/ui/views/frame/browser_frame_view_mac.mm
++++ b/chrome/browser/ui/views/frame/browser_frame_view_mac.mm
+@@ -9,6 +9,7 @@
+ 
+ #include "base/command_line.h"
+ #include "base/containers/fixed_flat_map.h"
++#include "base/feature_list.h"
+ #include "base/functional/bind.h"
+ #include "base/i18n/rtl.h"
+ #include "base/metrics/histogram_macros.h"
+@@ -25,12 +26,14 @@
+ #include "chrome/browser/ui/color/chrome_color_provider_utils.h"
+ #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
+ #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_features.h"
+ #include "chrome/browser/ui/fullscreen_util_mac.h"
+ #include "chrome/browser/ui/layout_constants.h"
+ #include "chrome/browser/ui/tabs/tab_style.h"
+ #include "chrome/browser/ui/view_ids.h"
+ #include "chrome/browser/ui/views/bookmarks/bookmark_bar_view.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
+ #include "chrome/browser/ui/views/frame/browser_widget.h"
+ #include "chrome/browser/ui/views/frame/caption_button_placeholder_container.h"
+ #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
+@@ -445,6 +448,18 @@ BrowserFrameViewMac::GetCaptionButtonBounds() const {
+     return result;
+   }
+ 
++  // Evo owns the visible top chrome in a trusted WebUI, but macOS continues
++  // to own the real window controls. Anchor those controls to the same layout
++  // contract as the sidebar rather than Chromium's stock titlebar origin.
++  if (base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell)) {
++    if (const auto* host = GetBrowserView()->evo_shell_host_for_testing();
++        host && host->surfaces_ready() && !host->fallback_active()) {
++      result.bounds = gfx::RectF(host->traffic_light_reserved_bounds());
++      result.margins = gfx::OutsetsF();
++      return result;
++    }
++  }
++
+   // LINT.IfChange(MacTabStripInsets)
+   // These are empirically determined; feel free to change them if they're
+   // not precise.
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index f13ef0ce4dd5606700f9670d90fb09396932bc8c..67fa3a04e6a9cca3cdf33ccddfe911d66dca0c97 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -5625,6 +5625,7 @@ void BrowserView::OnEvoShellReady() {
+   if (evo_right_rail_) {
+     evo_right_rail_->SetVisible(false);
+   }
++  GetFrameView()->OnTabStripStateChanged();
+   InvalidateLayout();
+ }
+ 

@@ -1,7 +1,7 @@
 From 5daec047f7ef002a4c9c7338b7fd9299dc0c9f33 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 18 Jul 2026 17:58:58 -0500
-Subject: [PATCH 08/18] Stabilize Evo shell layout
+Subject: [PATCH 08/22] Stabilize Evo shell layout
 
 ---
  chrome/browser/ui/views/frame/browser_view.cc | 87 +++++++------------
