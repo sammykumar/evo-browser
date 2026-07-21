@@ -1,7 +1,7 @@
 From b4188fbb9f00eb11eff024060781736546cf68bc Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 18 Jul 2026 15:56:37 -0500
-Subject: [PATCH 02/25] evo: add Spaces and Favorites sidebar foundation
+Subject: [PATCH 02/26] evo: add Spaces and Favorites sidebar foundation
 
 ---
  chrome/app/generated_resources.grd            | 38 +++++++++----------

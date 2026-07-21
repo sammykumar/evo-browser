@@ -1,7 +1,7 @@
 From 0e28aacd8f7bf2ad4d657414eb0b76bb37116f57 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 18 Jul 2026 15:53:06 -0500
-Subject: [PATCH 01/25] evo: establish branded Chromium baseline
+Subject: [PATCH 01/26] evo: establish branded Chromium baseline
 
 ---
  chrome/app/app-Info.plist                     |   2 +

@@ -1,7 +1,7 @@
 From 00e1941d4df693df0f82eb31c324ab34c09a5dfa Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Mon, 20 Jul 2026 17:21:46 -0500
-Subject: [PATCH 21/25] evo: render Figma WebUI address bar
+Subject: [PATCH 21/26] evo: render Figma WebUI address bar
 
 ---
  chrome/browser/resources/evo_shell/BUILD.gn   |  1 +
