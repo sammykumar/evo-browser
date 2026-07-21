@@ -1,7 +1,7 @@
 From 73fe2355125c305ec200c45013bae45a8b178e2e Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 18 Jul 2026 20:28:51 -0500
-Subject: [PATCH 10/24] Add Evo AI runtime and agent surfaces
+Subject: [PATCH 10/25] Add Evo AI runtime and agent surfaces
 
 ---
  chrome/browser/BUILD.gn                       |   1 +
