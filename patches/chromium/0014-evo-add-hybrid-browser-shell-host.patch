@@ -1,7 +1,7 @@
 From da09c02c2ed116d34a280c8d3fd4a075138028de Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sun, 19 Jul 2026 15:58:47 -0500
-Subject: [PATCH 14/22] evo: add hybrid browser shell host
+Subject: [PATCH 14/23] evo: add hybrid browser shell host
 
 ---
  chrome/browser/ui/BUILD.gn                    |   2 +
