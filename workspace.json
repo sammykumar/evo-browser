@@ -3,9 +3,9 @@
   "chromium": {
     "checkoutPath": "evo-chromium/src",
     "baseRevision": "e69b30bba288603e514cffb4c79c359cac68e923",
-    "evoRevision": "76a7e3182c7aec44d311ac23fad25382350a580c",
+    "evoRevision": "6d8f1c3b37e053257db2b93c7fd8bf2ecca0b48e",
     "patchDirectory": "patches/chromium",
-    "patchCount": 12
+    "patchCount": 24
   },
   "components": {
     "runtime": {

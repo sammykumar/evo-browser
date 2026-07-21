@@ -1,0 +1,574 @@
+From 0deb4fab1816bd685827b9c6affb561c077d0848 Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Mon, 20 Jul 2026 05:14:01 -0500
+Subject: [PATCH 18/24] evo: polish shell surfaces and toolbar
+
+---
+ .../browser/ui/evo_shell/evo_shell_tokens.h   |  7 +++
+ .../ui/evo_shell/generate_evo_shell_tokens.py |  7 +++
+ .../generate_evo_shell_tokens_test.py         |  8 +++
+ chrome/browser/ui/ui_features.cc              | 34 +++++++----
+ .../ui/views/frame/evo_shell_host_view.cc     | 14 +++++
+ .../ui/views/frame/evo_shell_host_view.h      |  6 ++
+ .../frame/evo_shell_host_view_unittest.cc     | 19 ++++++
+ .../layout/browser_view_tabbed_layout_impl.cc |  8 ++-
+ .../views/location_bar/location_bar_view.cc   | 22 ++++++-
+ .../ui/views/omnibox/omnibox_view_views.cc    | 10 +++
+ .../browser/ui/views/toolbar/toolbar_view.cc  | 61 +++++++++++++++++--
+ .../browser/ui/views/toolbar/toolbar_view.h   |  1 +
+ .../webui/evo_shell/evo_shell_browsertest.cc  | 23 +++++++
+ 13 files changed, 200 insertions(+), 20 deletions(-)
+
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_tokens.h b/chrome/browser/ui/evo_shell/evo_shell_tokens.h
+index 38d274df8f906970aad2bc34e01b8a08627512e9..ebad52af937337ef371863583cdcdfce9e17d39b 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_tokens.h
++++ b/chrome/browser/ui/evo_shell/evo_shell_tokens.h
+@@ -4,6 +4,8 @@
+ #ifndef CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_TOKENS_H_
+ #define CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_TOKENS_H_
+ 
++#include <cstdint>
++
+ namespace evo::shell::tokens {
+ 
+ inline constexpr int kOuterInset = 18;
+@@ -22,6 +24,11 @@ inline constexpr char kSurfaceOverlay[] = "#20242e";
+ inline constexpr char kHairline[] = "rgba(255,255,255,.08)";
+ inline constexpr char kHairlineStrong[] = "rgba(255,255,255,.14)";
+ 
++inline constexpr uint32_t kSurfaceCanvasColor = 0xff0d0f13;
++inline constexpr uint32_t kSurfaceSidebarColor = 0xff14171d;
++inline constexpr uint32_t kSurfacePanelColor = 0xff1a1e26;
++inline constexpr uint32_t kSurfaceOverlayColor = 0xff20242e;
++
+ }  // namespace evo::shell::tokens
+ 
+ #endif  // CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_TOKENS_H_
+diff --git a/chrome/browser/ui/evo_shell/generate_evo_shell_tokens.py b/chrome/browser/ui/evo_shell/generate_evo_shell_tokens.py
+index dc6e6705aec60b0e1c529f88705cb4a0aa563cdd..45ed57574cd83a7dfdd86414d7c16816543b771e 100644
+--- a/chrome/browser/ui/evo_shell/generate_evo_shell_tokens.py
++++ b/chrome/browser/ui/evo_shell/generate_evo_shell_tokens.py
+@@ -88,6 +88,8 @@ def render_header(data):
+         "#ifndef CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_TOKENS_H_",
+         "#define CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_TOKENS_H_",
+         "",
++        "#include <cstdint>",
++        "",
+         "namespace evo::shell::tokens {",
+         "",
+         f"inline constexpr int kOuterInset = {layout['outerInset']};",
+@@ -102,6 +104,11 @@ def render_header(data):
+     ]
+     for name, value in native_colors.items():
+         lines.append(f'inline constexpr char {name}[] = "{value}";')
++    lines.append("")
++    for name, value in native_colors.items():
++        if value.startswith("#"):
++            lines.append(
++                f"inline constexpr uint32_t {name}Color = 0xff{value[1:]};")
+     lines.extend([
+         "",
+         "}  // namespace evo::shell::tokens",
+diff --git a/chrome/browser/ui/evo_shell/generate_evo_shell_tokens_test.py b/chrome/browser/ui/evo_shell/generate_evo_shell_tokens_test.py
+index d537c0b2286b565657e34b08364421d51b3a1c0a..88ca1a199ac3362c6530afbbca392a878833c292 100644
+--- a/chrome/browser/ui/evo_shell/generate_evo_shell_tokens_test.py
++++ b/chrome/browser/ui/evo_shell/generate_evo_shell_tokens_test.py
+@@ -156,6 +156,14 @@ class EvoShellTokenGeneratorTest(unittest.TestCase):
+             self.assertIn(f"[data-theme-mode='{mode}']", css)
+         self.assertNotIn('[data-theme-mode="', css)
+ 
++    def test_generated_header_exposes_native_argb_colors(self):
++        header = self.load_generator().render_header(self.load_source())
++
++        self.assertIn("inline constexpr uint32_t kSurfaceOverlayColor = "
++                      "0xff20242e;", header)
++        self.assertIn("inline constexpr uint32_t kSurfaceCanvasColor = "
++                      "0xff0d0f13;", header)
++
+     def test_theme_blocks_change_only_accent_and_wallpaper(self):
+         data = self.load_source()
+         generator = self.load_generator()
+diff --git a/chrome/browser/ui/ui_features.cc b/chrome/browser/ui/ui_features.cc
+index 5e8ecc3874aecf866f71eb9b193568e8775b7d28..7f9047812de89caa0e16c96825ab40dcd867df30 100644
+--- a/chrome/browser/ui/ui_features.cc
++++ b/chrome/browser/ui/ui_features.cc
+@@ -9,6 +9,7 @@
+ #include "base/time/time.h"
+ #include "build/build_config.h"
+ #include "chrome/browser/browser_process.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_features.h"
+ #include "chrome/common/chrome_features.h"
+ #include "components/search/ntp_features.h"
+ #include "components/variations/service/variations_service.h"
+@@ -437,68 +438,79 @@ bool IsNewTabAddsToActiveGroupEnabled() {
+ BASE_FEATURE(kWebUIAvatarButton, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ bool IsWebUIReloadButtonEnabled() {
+-  return !IsProcessOverheadExperimentActive() &&
++  return !base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell) &&
++         !IsProcessOverheadExperimentActive() &&
+          base::FeatureList::IsEnabled(features::kInitialWebUI) &&
+          base::FeatureList::IsEnabled(features::kWebUIReloadButton);
+ }
+ 
+ bool IsWebUIHomeButtonEnabled() {
+-  return !IsProcessOverheadExperimentActive() &&
++  return !base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell) &&
++         !IsProcessOverheadExperimentActive() &&
+          base::FeatureList::IsEnabled(features::kInitialWebUI) &&
+          base::FeatureList::IsEnabled(features::kWebUIHomeButton);
+ }
+ 
+ bool IsWebUIBatterySaverButtonEnabled() {
+-  return !IsProcessOverheadExperimentActive() &&
++  return !base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell) &&
++         !IsProcessOverheadExperimentActive() &&
+          base::FeatureList::IsEnabled(features::kInitialWebUI) &&
+          base::FeatureList::IsEnabled(features::kWebUIBatterySaverButton);
+ }
+ 
+ bool IsWebUIAppMenuButtonEnabled() {
+-  return !IsProcessOverheadExperimentActive() &&
++  return !base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell) &&
++         !IsProcessOverheadExperimentActive() &&
+          base::FeatureList::IsEnabled(features::kInitialWebUI) &&
+          base::FeatureList::IsEnabled(features::kWebUIAppMenuButton);
+ }
+ 
+ bool IsWebUIBackForwardButtonEnabled() {
+-  return !IsProcessOverheadExperimentActive() &&
++  return !base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell) &&
++         !IsProcessOverheadExperimentActive() &&
+          base::FeatureList::IsEnabled(features::kInitialWebUI) &&
+          base::FeatureList::IsEnabled(features::kWebUIBackForwardButton);
+ }
+ 
+ bool IsWebUIPinnedToolbarActionsEnabled() {
+-  return !IsProcessOverheadExperimentActive() &&
++  return !base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell) &&
++         !IsProcessOverheadExperimentActive() &&
+          base::FeatureList::IsEnabled(features::kInitialWebUI) &&
+          base::FeatureList::IsEnabled(features::kWebUIPinnedToolbarActions);
+ }
+ 
+ bool IsWebUIExtensionsContainerEnabled() {
+-  return !IsProcessOverheadExperimentActive() &&
++  return !base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell) &&
++         !IsProcessOverheadExperimentActive() &&
+          base::FeatureList::IsEnabled(features::kInitialWebUI) &&
+          base::FeatureList::IsEnabled(features::kWebUIExtensionsContainer);
+ }
+ 
+ bool IsWebUISplitTabsButtonEnabled() {
+-  return !IsProcessOverheadExperimentActive() &&
++  return !base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell) &&
++         !IsProcessOverheadExperimentActive() &&
+          base::FeatureList::IsEnabled(features::kInitialWebUI) &&
+          base::FeatureList::IsEnabled(features::kWebUISplitTabsButton);
+ }
+ 
+ bool IsWebUIAvatarButtonEnabled() {
+-  return !IsProcessOverheadExperimentActive() &&
++  return !base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell) &&
++         !IsProcessOverheadExperimentActive() &&
+          base::FeatureList::IsEnabled(features::kInitialWebUI) &&
+          base::FeatureList::IsEnabled(features::kWebUIAvatarButton);
+ }
+ 
+ bool IsWebUIPerformanceInterventionButtonEnabled() {
+-  return !IsProcessOverheadExperimentActive() &&
++  return !base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell) &&
++         !IsProcessOverheadExperimentActive() &&
+          base::FeatureList::IsEnabled(features::kInitialWebUI) &&
+          base::FeatureList::IsEnabled(
+              features::kWebUIPerformanceInterventionButton);
+ }
+ 
+ bool IsWebUILocationBarEnabled() {
+-  return !IsProcessOverheadExperimentActive() &&
++  return !base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell) &&
++         !IsProcessOverheadExperimentActive() &&
+          base::FeatureList::IsEnabled(features::kInitialWebUI) &&
+          base::FeatureList::IsEnabled(features::kWebUILocationBar);
+ }
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view.cc b/chrome/browser/ui/views/frame/evo_shell_host_view.cc
+index bfdda0aacbe31fcb3dc44ac1902155ffd96f92e1..4f025c133d34ba31db8235c9d29bf3754f5bb7c0 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_host_view.cc
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view.cc
+@@ -19,6 +19,7 @@
+ #include "ui/base/metadata/metadata_impl_macros.h"
+ #include "ui/compositor/layer.h"
+ #include "ui/gfx/canvas.h"
++#include "ui/gfx/geometry/rounded_corners_f.h"
+ #include "ui/gfx/geometry/skia_conversions.h"
+ #include "ui/views/controls/webview/webview.h"
+ #include "url/gurl.h"
+@@ -31,6 +32,17 @@ constexpr int kTrafficLightWidth = 60;
+ constexpr int kTrafficLightHeight = 14;
+ constexpr char kEvoShellOwnerKey = 0;
+ 
++void ConfigureSurfaceView(views::WebView* surface) {
++  surface->SetPaintToLayer();
++  surface->layer()->SetFillsBoundsOpaquely(false);
++  surface->layer()->SetMasksToBounds(true);
++  surface->layer()->SetRoundedCornerRadius(
++      gfx::RoundedCornersF(shell::tokens::kSurfaceRadius));
++  surface->layer()->SetIsFastRoundedCorner(true);
++  surface->SetBackground(nullptr);
++  surface->GetWebContents()->SetPageBaseBackgroundColor(SK_ColorTRANSPARENT);
++}
++
+ class EvoShellOwnerData : public base::SupportsUserData::Data {
+  public:
+   explicit EvoShellOwnerData(BrowserView* owner) : owner_(owner) {}
+@@ -101,6 +113,8 @@ EvoShellHostView::EvoShellHostView(Profile* profile,
+   sidebar_web_view_ = AddChildView(std::make_unique<views::WebView>(profile));
+   right_rail_web_view_ =
+       AddChildView(std::make_unique<views::WebView>(profile));
++  ConfigureSurfaceView(sidebar_web_view_);
++  ConfigureSurfaceView(right_rail_web_view_);
+   sidebar_web_view_->GetWebContents()->SetUserData(
+       &kEvoShellOwnerKey, std::make_unique<EvoShellOwnerData>(owner));
+   right_rail_web_view_->GetWebContents()->SetUserData(
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view.h b/chrome/browser/ui/views/frame/evo_shell_host_view.h
+index 2e589a8333eef327b7b9d0f21fb17cbd1972f8d4..bf0f7533bdab3765537dceac0e9357083b6980ea 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_host_view.h
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view.h
+@@ -91,6 +91,12 @@ class EvoShellHostView : public views::View {
+   gfx::Rect traffic_light_reserved_bounds() const {
+     return shell_layout_.traffic_light_reserved_bounds;
+   }
++  views::WebView* sidebar_web_view_for_testing() const {
++    return sidebar_web_view_;
++  }
++  views::WebView* right_rail_web_view_for_testing() const {
++    return right_rail_web_view_;
++  }
+ 
+  protected:
+   void Layout(PassKey) override;
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc b/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
+index fbc40512d81b39b657ed6cb10aa980238e2900b2..66b2d8791ac8179dff7b1ac969bade95565e3dfe 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
+@@ -6,6 +6,10 @@
+ 
+ #include "base/functional/bind.h"
+ #include "base/functional/callback_helpers.h"
++#include "base/test/scoped_feature_list.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_features.h"
++#include "chrome/browser/ui/ui_features.h"
++#include "chrome/common/chrome_features.h"
+ #include "testing/gtest/include/gtest/gtest.h"
+ 
+ namespace evo {
+@@ -110,5 +114,20 @@ TEST(EvoShellHostViewTest, FallbackCallbackRunsExactlyOnce) {
+   EXPECT_EQ(fallback_count, 1);
+ }
+ 
++TEST(EvoShellHostViewTest, HybridShellOwnsToolbarComposition) {
++  base::test::ScopedFeatureList features;
++  features.InitWithFeatures(
++      {evo::features::kEvoHybridBrowserShell, features::kInitialWebUI,
++       features::kWebUIReloadButton, features::kWebUILocationBar,
++       features::kWebUIAvatarButton, features::kWebUIAppMenuButton},
++      {});
++
++  EXPECT_FALSE(features::IsWebUIToolbarEnabled());
++  EXPECT_FALSE(features::IsWebUIReloadButtonEnabled());
++  EXPECT_FALSE(features::IsWebUILocationBarEnabled());
++  EXPECT_FALSE(features::IsWebUIAvatarButtonEnabled());
++  EXPECT_FALSE(features::IsWebUIAppMenuButtonEnabled());
++}
++
+ }  // namespace
+ }  // namespace evo
+diff --git a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
+index 849ae78a7b21eb92e019abe26981047a4c4b312f..ebb3492e009b996561452f1d9f5d256ff7f4a075 100644
+--- a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
++++ b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
+@@ -15,6 +15,7 @@
+ #include "build/build_config.h"
+ #include "chrome/browser/ui/animation/browser_animation_controller.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_features.h"
+ #include "chrome/browser/ui/layout_constants.h"
+ #include "chrome/browser/ui/ui_features.h"
+ #include "chrome/browser/ui/views/animations/side_panel_animations.h"
+@@ -1511,8 +1512,11 @@ void BrowserViewTabbedLayoutImpl::DoPostLayoutVisualAdjustments(
+   // Set toolbar corners.
+   auto* const toolbar_background =
+       views().toolbar->background()->AsA<CustomCornersBackground>();
+-  CHECK(toolbar_background)
+-      << "Expected toolbar to have a CustomCornersBackground.";
++  if (!toolbar_background) {
++    CHECK(base::FeatureList::IsEnabled(
++        evo::features::kEvoHybridBrowserShell));
++    return;
++  }
+   CustomCornersBackground::Corners toolbar_corners;
+   switch (layout_data_->tab_strip_type) {
+     case TabStripType::kHorizontal: {
+diff --git a/chrome/browser/ui/views/location_bar/location_bar_view.cc b/chrome/browser/ui/views/location_bar/location_bar_view.cc
+index 24c769cf019feb8ea7c846d5e9bb6606011abf3b..c6e154513056069e5c94f3c5c289fe13d1537402 100644
+--- a/chrome/browser/ui/views/location_bar/location_bar_view.cc
++++ b/chrome/browser/ui/views/location_bar/location_bar_view.cc
+@@ -48,6 +48,8 @@
+ #include "chrome/browser/ui/browser_window.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_features.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_tokens.h"
+ #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
+ #include "chrome/browser/ui/layout_constants.h"
+ #include "chrome/browser/ui/lens/lens_overlay_entry_point_controller.h"
+@@ -474,6 +476,11 @@ void LocationBarView::Init() {
+     actions::ActionItem* root_action_item =
+         browser_->browser_actions()->root_action_item();
+     for (actions::ActionId action_id : page_actions::kActionIds) {
++      if (base::FeatureList::IsEnabled(
++              evo::features::kEvoHybridBrowserShell) &&
++          action_id == kActionAiMode) {
++        continue;
++      }
+       if (actions::ActionItem* item = actions::ActionManager::Get().FindAction(
+               action_id, root_action_item)) {
+         page_action_items.emplace_back(item);
+@@ -557,7 +564,9 @@ void LocationBarView::Init() {
+   // Because AIM eligibility can change during the lifecycle of the
+   // `LocationBarView`, the AI Mode page action is added regardless of
+   // eligibility, but its visibility is toggled to match eligibility.
+-  if (base::FeatureList::IsEnabled(omnibox::kAiModeOmniboxEntryPoint)) {
++  if (!base::FeatureList::IsEnabled(
++          evo::features::kEvoHybridBrowserShell) &&
++      base::FeatureList::IsEnabled(omnibox::kAiModeOmniboxEntryPoint)) {
+     // Position in the leading position, like the entrypoint for
+     // kLensOverlayHomework above. While both chips may be enabled, they will
+     // not appear at the same time due to different focus behavior. The
+@@ -1563,6 +1572,17 @@ gfx::Rect LocationBarView::GetLocalBoundsWithoutEndcaps() const {
+ }
+ 
+ void LocationBarView::RefreshBackground() {
++  if (base::FeatureList::IsEnabled(
++          evo::features::kEvoHybridBrowserShell)) {
++    background_color_ =
++        static_cast<SkColor>(evo::shell::tokens::kSurfaceOverlayColor);
++    SetBackground(views::CreateRoundedRectBackground(
++        background_color_, evo::shell::tokens::kControlRadius));
++    omnibox_view_->SetBackgroundColor(background_color_);
++    SchedulePaint();
++    return;
++  }
++
+   const double opacity = hover_animation_.GetCurrentValue();
+   const bool is_caret_visible =
+       GetOmniboxController()->edit_model()->is_caret_visible();
+diff --git a/chrome/browser/ui/views/omnibox/omnibox_view_views.cc b/chrome/browser/ui/views/omnibox/omnibox_view_views.cc
+index a9a4fc45b35adffc2c57820c68d071f76c212dc1..a5fa627b5ecb8f3571f732dddd1a81ea53303f91 100644
+--- a/chrome/browser/ui/views/omnibox/omnibox_view_views.cc
++++ b/chrome/browser/ui/views/omnibox/omnibox_view_views.cc
+@@ -46,6 +46,7 @@
+ #include "chrome/browser/ui/browser_element_identifiers.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_features.h"
+ #include "chrome/browser/ui/lens/lens_overlay_entry_point_controller.h"
+ #include "chrome/browser/ui/omnibox/ai_mode_button_config.h"
+ #include "chrome/browser/ui/omnibox/clipboard_utils.h"
+@@ -400,6 +401,10 @@ void OmniboxViewViews::InstallPlaceholderText() {
+     // If `keyword_placeholder()` is set, then the user is in a keyword mode
+     // that has placeholder text, so display that.
+     SetPlaceholderText(controller()->edit_model()->keyword_placeholder());
++  } else if (base::FeatureList::IsEnabled(
++                 evo::features::kEvoHybridBrowserShell)) {
++    SetPlaceholderText(u"Search or enter URL");
++    GetViewAccessibility().SetPlaceholder("Search or enter URL");
+   } else if (ShouldInstallAimPlaceholderText()) {
+     // If the Omnibox is visibly focused w/ AI Mode enabled, display the AI Mode
+     // placeholder text to suggest tabbing into AI Mode. Note, even if the AI
+@@ -2677,6 +2682,11 @@ bool OmniboxViewViews::AreAimHintImpressionLimitsReached() const {
+ }
+ 
+ bool OmniboxViewViews::ShouldInstallAimPlaceholderText() const {
++  if (base::FeatureList::IsEnabled(
++          evo::features::kEvoHybridBrowserShell)) {
++    return false;
++  }
++
+   // `location_bar_view_` can be null in tests.
+   if (!location_bar_view_) {
+     return false;
+diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.cc b/chrome/browser/ui/views/toolbar/toolbar_view.cc
+index 353008584089ca7b17fb8adde8361d81e30e8548..4d715054d40f424556fb1e2fc20a27626a970d00 100644
+--- a/chrome/browser/ui/views/toolbar/toolbar_view.cc
++++ b/chrome/browser/ui/views/toolbar/toolbar_view.cc
+@@ -52,6 +52,7 @@
+ #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/evo_shell/evo_shell_features.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_tokens.h"
+ #include "chrome/browser/ui/global_error/global_error_service.h"
+ #include "chrome/browser/ui/global_error/global_error_service_factory.h"
+ #include "chrome/browser/ui/intent_picker_tab_helper.h"
+@@ -343,10 +344,17 @@ void ToolbarView::Init() {
+   }
+ 
+   if (display_mode_ == DisplayMode::kNormal) {
+-    SetBackground(std::make_unique<CustomCornersBackground>(
+-        *this, *browser_view_,
+-        /*primary_color=*/CustomCornersBackground::ToolbarTheme(),
+-        /*corner_color=*/CustomCornersBackground::FrameTheme()));
++    if (base::FeatureList::IsEnabled(
++            evo::features::kEvoHybridBrowserShell)) {
++      SetBackground(views::CreateRoundedRectBackground(
++          static_cast<SkColor>(evo::shell::tokens::kSurfaceOverlayColor),
++          evo::shell::tokens::kControlRadius));
++    } else {
++      SetBackground(std::make_unique<CustomCornersBackground>(
++          *this, *browser_view_,
++          /*primary_color=*/CustomCornersBackground::ToolbarTheme(),
++          /*corner_color=*/CustomCornersBackground::FrameTheme()));
++    }
+   } else if (display_mode_ == DisplayMode::kCustomTab) {
+     custom_tab_bar_ =
+         AddChildView(std::make_unique<CustomTabBarView>(browser_view_, this));
+@@ -411,7 +419,7 @@ void ToolbarView::Init() {
+     evo_sidebar_toggle_ = AddChildView(std::make_unique<ToolbarButton>(
+         base::BindRepeating(&ToolbarView::OnEvoSidebarToggle,
+                             base::Unretained(this))));
+-    evo_sidebar_toggle_->SetVectorIcon(kDockToRightIcon);
++    evo_sidebar_toggle_->SetVectorIcon(kDockToLeftIcon);
+     evo_sidebar_toggle_->SetTooltipText(u"Show sidebar");
+   }
+   if (!features::IsWebUIBackForwardButtonEnabled()) {
+@@ -477,7 +485,7 @@ void ToolbarView::Init() {
+     evo_right_rail_toggle_ = AddChildView(std::make_unique<ToolbarButton>(
+         base::BindRepeating(&ToolbarView::OnEvoRightRailToggle,
+                             base::Unretained(this))));
+-    evo_right_rail_toggle_->SetVectorIcon(kDockToLeftIcon);
++    evo_right_rail_toggle_->SetVectorIcon(kDockToRightIcon);
+     evo_right_rail_toggle_->SetTooltipText(u"Toggle tool rail");
+   }
+ 
+@@ -687,6 +695,8 @@ void ToolbarView::Init() {
+ 
+   InitLayout();
+ 
++  ConfigureEvoShellAppearance();
++
+   for (auto* button : std::array<views::Button*, 5>{back_, forward_, reload_,
+                                                     home_, avatar_}) {
+     if (button) {
+@@ -1390,6 +1400,10 @@ gfx::Size ToolbarView::CalculatePreferredSize(
+         size.SetToMin({size.width(), max_height});
+       }
+   }
++  if (display_mode_ == DisplayMode::kNormal &&
++      base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell)) {
++    size.set_height(evo::shell::tokens::kToolbarHeight);
++  }
+   size.set_height(size.height() * size_animation_.GetCurrentValue());
+   return size;
+ }
+@@ -1630,6 +1644,40 @@ void ToolbarView::InitLayout() {
+   LayoutCommon();
+ }
+ 
++void ToolbarView::ConfigureEvoShellAppearance() {
++  if (!base::FeatureList::IsEnabled(
++          evo::features::kEvoHybridBrowserShell) ||
++      display_mode_ != DisplayMode::kNormal) {
++    return;
++  }
++
++  for (views::View* view :
++       {static_cast<views::View*>(home_),
++        static_cast<views::View*>(split_tabs_),
++        static_cast<views::View*>(extensions_container_),
++        static_cast<views::View*>(toolbar_divider_),
++        static_cast<views::View*>(pinned_toolbar_actions_container_),
++        static_cast<views::View*>(avatar_),
++        static_cast<views::View*>(media_button_),
++        static_cast<views::View*>(app_menu_button_),
++        static_cast<views::View*>(tab_search_button_),
++        static_cast<views::View*>(battery_saver_button_),
++        static_cast<views::View*>(performance_intervention_button_),
++        static_cast<views::View*>(glic_actor_button_container_),
++        static_cast<views::View*>(glic_button_),
++        static_cast<views::View*>(glic_button_divider_),
++        static_cast<views::View*>(ai_overlay_dialog_button_)}) {
++    if (view) {
++      view->SetVisible(false);
++    }
++  }
++
++  layout_manager_->SetInteriorMargin(gfx::Insets::VH(0, 4));
++  if (location_bar_view_) {
++    location_bar_view_->SetProperty(views::kMarginsKey, gfx::Insets());
++  }
++}
++
+ void ToolbarView::LayoutCommon() {
+   DCHECK(display_mode_ == DisplayMode::kNormal);
+ 
+@@ -1696,6 +1744,7 @@ void ToolbarView::LayoutCommon() {
+     views::ManualLayoutUtil(layout_manager_)
+         .SetViewHidden(toolbar_divider_, !extensions_container_->GetVisible());
+   }
++  ConfigureEvoShellAppearance();
+   // Cast button visibility is controlled externally.
+ }
+ 
+diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.h b/chrome/browser/ui/views/toolbar/toolbar_view.h
+index 3c0e8c869233bece7895e29d246d6a920702b1a5..34ebd98f33bdf8812814d16fae1e2e012f2c372b 100644
+--- a/chrome/browser/ui/views/toolbar/toolbar_view.h
++++ b/chrome/browser/ui/views/toolbar/toolbar_view.h
+@@ -279,6 +279,7 @@ class ToolbarView : public views::AccessiblePaneView,
+ 
+   // Logic that must be done on initialization and then on layout.
+   void LayoutCommon();
++  void ConfigureEvoShellAppearance();
+ 
+   // AppMenuIconController::Delegate:
+   void UpdateTypeAndSeverity(
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+index b49d24585ad7642f2b28940effceee20f5a9825c..c3b06439805d12eac81bccf068b2f217e74fa254 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
++++ b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+@@ -2,9 +2,14 @@
+ 
+ #include "base/test/scoped_feature_list.h"
+ #include "chrome/browser/ui/evo_shell/evo_shell_features.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
+ #include "chrome/common/webui_url_constants.h"
+ #include "chrome/test/base/web_ui_mocha_browser_test.h"
+ #include "content/public/test/browser_test.h"
++#include "ui/compositor/layer.h"
++#include "ui/gfx/geometry/rounded_corners_f.h"
++#include "ui/views/controls/webview/webview.h"
+ 
+ class EvoShellUIBrowserTest : public WebUIMochaBrowserTest {
+  protected:
+@@ -23,3 +28,21 @@ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest, Foundation) {
+ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest, Components) {
+   RunTest("evo_shell/evo_shell_components_test.js", "mocha.run()");
+ }
++
++IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
++                       NativeSurfacesClipToFigmaRadius) {
++  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
++  ASSERT_TRUE(browser_view);
++  auto* host = browser_view->evo_shell_host_for_testing();
++  ASSERT_TRUE(host);
++
++  for (views::WebView* surface :
++       {host->sidebar_web_view_for_testing(),
++        host->right_rail_web_view_for_testing()}) {
++    ASSERT_TRUE(surface);
++    ASSERT_TRUE(surface->layer());
++    EXPECT_TRUE(surface->layer()->GetMasksToBounds());
++    EXPECT_EQ(surface->layer()->rounded_corner_radii(),
++              gfx::RoundedCornersF(evo::shell::tokens::kSurfaceRadius));
++  }
++}

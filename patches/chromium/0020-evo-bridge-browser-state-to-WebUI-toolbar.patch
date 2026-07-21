@@ -1,0 +1,249 @@
+From 7babf705393332d634fda60013f0870b12aba9d8 Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Mon, 20 Jul 2026 17:21:32 -0500
+Subject: [PATCH 20/24] evo: bridge browser state to WebUI toolbar
+
+---
+ .../ui/evo_shell/evo_shell_coordinator.cc     | 47 ++++++++++++++++++-
+ .../ui/evo_shell/evo_shell_coordinator.h      |  1 +
+ .../browser/ui/evo_shell/evo_shell_types.cc   |  6 +++
+ chrome/browser/ui/evo_shell/evo_shell_types.h |  6 +++
+ chrome/browser/ui/views/frame/browser_view.cc | 19 ++++++++
+ chrome/browser/ui/views/frame/browser_view.h  |  2 +
+ .../ui/webui/evo_shell/evo_shell_ui.cc        | 24 ++++++++--
+ 7 files changed, 99 insertions(+), 6 deletions(-)
+
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+index 192bca003583ceda0deddfbba7b2ee0b630bb9ba..e5f9d170e030f29deef9080f7b75a71f76abd19e 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+@@ -25,7 +25,12 @@
+ #include "components/prefs/pref_service.h"
+ #include "components/tab_groups/tab_group_id.h"
+ #include "components/tabs/public/tab_group.h"
++#include "components/url_formatter/url_fixer.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/reload_type.h"
+ #include "content/public/browser/web_contents.h"
++#include "content/public/common/referrer.h"
++#include "ui/base/page_transition_types.h"
+ #include "url/gurl.h"
+ 
+ namespace evo::shell {
+@@ -103,8 +108,18 @@ base::DictValue EvoShellCoordinator::BuildSnapshot() const {
+   TabStripModel* model = browser_->tab_strip_model();
+   ShellSnapshot snapshot;
+   snapshot.sidebar_collapsed = host_->sidebar_collapsed();
++  snapshot.right_rail_visible = host_->right_rail_visible();
+   snapshot.active_rail_target = active_rail_target_;
+ 
++  if (content::WebContents* contents = model->GetActiveWebContents()) {
++    auto& controller = contents->GetController();
++    snapshot.active_url = contents->GetVisibleURL().spec();
++    snapshot.active_title = base::UTF16ToUTF8(contents->GetTitle());
++    snapshot.can_go_back = controller.CanGoBack();
++    snapshot.can_go_forward = controller.CanGoForward();
++    snapshot.is_loading = contents->IsLoading();
++  }
++
+   snapshot.spaces.push_back(
+       {.id = "default", .name = "Agent", .mode = kThemeModes[0]});
+ 
+@@ -205,6 +220,30 @@ base::DictValue EvoShellCoordinator::DispatchAction(
+     if (target) {
+       active_rail_target_ = *target;
+     }
++  } else if (*type == "toggleRightRail") {
++    SetRightRailVisible(!host_->right_rail_visible());
++  } else if (content::WebContents* contents = model->GetActiveWebContents()) {
++    auto& controller = contents->GetController();
++    if (*type == "navigateBack" && controller.CanGoBack()) {
++      controller.GoBack();
++    } else if (*type == "navigateForward" && controller.CanGoForward()) {
++      controller.GoForward();
++    } else if (*type == "reload") {
++      controller.Reload(content::ReloadType::NORMAL, true);
++    } else if (*type == "navigate") {
++      const std::string* value = action.FindString("url");
++      if (value && !value->empty()) {
++        GURL target = url_formatter::FixupURL(*value);
++        if (!target.is_valid()) {
++          target = GURL("https://www.google.com/search?q=" +
++                        base::EscapeQueryParamValue(*value, true));
++        }
++        if (target.is_valid()) {
++          controller.LoadURL(target, content::Referrer(),
++                             ui::PAGE_TRANSITION_TYPED, std::string());
++        }
++      }
++    }
+   }
+ 
+   ScheduleSnapshotChanged();
+@@ -214,7 +253,9 @@ base::DictValue EvoShellCoordinator::DispatchAction(
+ void EvoShellCoordinator::SetSidebarCollapsed(bool collapsed) {
+   host_->SetSidebarCollapsed(collapsed);
+   profile_->GetPrefs()->SetBoolean(prefs::kSidebarCollapsed, collapsed);
+-  BrowserView::GetBrowserViewForBrowser(browser_)->InvalidateLayout();
++  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser_);
++  browser_view->GetFrameView()->OnTabStripStateChanged();
++  browser_view->InvalidateLayout();
+   ScheduleSnapshotChanged();
+ }
+ 
+@@ -225,6 +266,10 @@ void EvoShellCoordinator::SetRightRailVisible(bool visible) {
+   ScheduleSnapshotChanged();
+ }
+ 
++void EvoShellCoordinator::OnActiveTabStateChanged() {
++  ScheduleSnapshotChanged();
++}
++
+ base::CallbackListSubscription EvoShellCoordinator::AddSnapshotChangedCallback(
+     base::RepeatingCallback<void(const base::DictValue&)> callback) {
+   return snapshot_callbacks_.Add(std::move(callback));
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.h b/chrome/browser/ui/evo_shell/evo_shell_coordinator.h
+index 551df366f8a500aea41c42f93a7f3eaeabde3615..f391bf3daaa479ba009050a61a3264d332316bed 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_coordinator.h
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.h
+@@ -33,6 +33,7 @@ class EvoShellCoordinator : public TabStripModelObserver {
+   base::DictValue DispatchAction(const base::DictValue& action);
+   void SetSidebarCollapsed(bool collapsed);
+   void SetRightRailVisible(bool visible);
++  void OnActiveTabStateChanged();
+   base::CallbackListSubscription AddSnapshotChangedCallback(
+       base::RepeatingCallback<void(const base::DictValue&)> callback);
+ 
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_types.cc b/chrome/browser/ui/evo_shell/evo_shell_types.cc
+index 4a554a4d310407b4618b43222db39256e49adb6f..9d578538fca5eff29f52b134d61ba6948e0f85f9 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_types.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_types.cc
+@@ -66,6 +66,12 @@ base::DictValue ShellSnapshot::ToValue() const {
+   value.Set("folders", serialize(folders));
+   value.Set("openTabs", serialize(open_tabs));
+   value.Set("sidebarCollapsed", sidebar_collapsed);
++  value.Set("rightRailVisible", right_rail_visible);
++  value.Set("activeUrl", active_url);
++  value.Set("activeTitle", active_title);
++  value.Set("canGoBack", can_go_back);
++  value.Set("canGoForward", can_go_forward);
++  value.Set("isLoading", is_loading);
+   value.Set("activeRailTarget", active_rail_target);
+   return value;
+ }
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_types.h b/chrome/browser/ui/evo_shell/evo_shell_types.h
+index ebadb05fda1651215215fb4bc5d859eb2c837c6c..c53b8ca3481dc2149dd763b27044d7f8a745a232 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_types.h
++++ b/chrome/browser/ui/evo_shell/evo_shell_types.h
+@@ -52,6 +52,12 @@ struct ShellSnapshot {
+   std::vector<FolderSnapshot> folders;
+   std::vector<TabSnapshot> open_tabs;
+   bool sidebar_collapsed = false;
++  bool right_rail_visible = true;
++  std::string active_url;
++  std::string active_title;
++  bool can_go_back = false;
++  bool can_go_forward = false;
++  bool is_loading = false;
+   std::string active_rail_target = "ask-evo";
+ };
+ 
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index e44de2566359eb231b409dece4a8d0f535b885e7..f13ef0ce4dd5606700f9670d90fb09396932bc8c 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -3186,6 +3186,21 @@ void BrowserView::OnWidgetWindowModalVisibilityChanged(views::Widget* widget,
+ 
+ void BrowserView::TitleWasSet(content::NavigationEntry* entry) {
+   UpdateAccessibleNameForRootView();
++  if (evo_shell_coordinator_) {
++    evo_shell_coordinator_->OnActiveTabStateChanged();
++  }
++}
++
++void BrowserView::DidStartLoading() {
++  if (evo_shell_coordinator_) {
++    evo_shell_coordinator_->OnActiveTabStateChanged();
++  }
++}
++
++void BrowserView::DidStopLoading() {
++  if (evo_shell_coordinator_) {
++    evo_shell_coordinator_->OnActiveTabStateChanged();
++  }
+ }
+ 
+ void BrowserView::DidFinishNavigation(
+@@ -3195,6 +3210,10 @@ void BrowserView::DidFinishNavigation(
+     return;
+   }
+ 
++  if (evo_shell_coordinator_) {
++    evo_shell_coordinator_->OnActiveTabStateChanged();
++  }
++
+   if (AppUsesUnframedMode() && !window_management_subscription_id_) {
+     SetWindowManagementPermissionSubscriptionForUnframedMode(
+         navigation_handle->GetWebContents());
+diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
+index fe30aa232f2309c9f490f00851a362ede4d1f057..c560f1e2dac6376c9f322896c4f28ed09d7e6591 100644
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -723,6 +723,8 @@ class BrowserView : public BrowserWindow,
+ 
+   // content::WebContentsObserver:
+   void TitleWasSet(content::NavigationEntry* entry) override;
++  void DidStartLoading() override;
++  void DidStopLoading() override;
+   void DidFinishNavigation(
+       content::NavigationHandle* navigation_handle) override;
+ 
+diff --git a/chrome/browser/ui/webui/evo_shell/evo_shell_ui.cc b/chrome/browser/ui/webui/evo_shell/evo_shell_ui.cc
+index 932754fca6235508d8b3d2a390e28cb8835f98fd..1a20372273e1c736ca82660725ebbbb6444585c7 100644
+--- a/chrome/browser/ui/webui/evo_shell/evo_shell_ui.cc
++++ b/chrome/browser/ui/webui/evo_shell/evo_shell_ui.cc
+@@ -66,6 +66,9 @@ class EvoShellMessageHandler : public content::WebUIMessageHandler {
+     if (query.find("surface=sidebar") != std::string::npos) {
+       return "sidebar";
+     }
++    if (query.find("surface=toolbar") != std::string::npos) {
++      return "toolbar";
++    }
+     if (query.find("surface=rail") != std::string::npos) {
+       return "rail";
+     }
+@@ -100,9 +103,17 @@ class EvoShellMessageHandler : public content::WebUIMessageHandler {
+     bool allowed = false;
+     if (coordinator && action) {
+       const std::string* type = action->FindString("type");
+-      allowed =
+-          type && ((Surface() == "sidebar" && *type != "selectRailTarget") ||
+-                   (Surface() == "rail" && *type == "selectRailTarget"));
++      const std::string surface = Surface();
++      allowed = type &&
++                ((surface == "sidebar" && *type != "selectRailTarget" &&
++                  *type != "navigateBack" && *type != "navigateForward" &&
++                  *type != "reload" && *type != "navigate" &&
++                  *type != "toggleRightRail") ||
++                 (surface == "rail" && *type == "selectRailTarget") ||
++                 (surface == "toolbar" &&
++                  (*type == "navigateBack" || *type == "navigateForward" ||
++                   *type == "reload" || *type == "navigate" ||
++                   *type == "toggleRightRail")));
+     }
+     ResolveJavascriptCallback(
+         args[0].Clone(),
+@@ -118,8 +129,11 @@ class EvoShellMessageHandler : public content::WebUIMessageHandler {
+     BrowserView* owner = GetOwner();
+     if (owner && requested_surface && *requested_surface == Surface()) {
+       owner->evo_shell_host_for_testing()->MarkSurfaceReady(
+-          *requested_surface == "sidebar" ? evo::EvoShellSurface::kSidebar
+-                                          : evo::EvoShellSurface::kRightRail);
++          *requested_surface == "sidebar"
++              ? evo::EvoShellSurface::kSidebar
++              : *requested_surface == "toolbar"
++                    ? evo::EvoShellSurface::kToolbar
++                    : evo::EvoShellSurface::kRightRail);
+     }
+     ResolveJavascriptCallback(args[0].Clone(), base::Value(true));
+   }

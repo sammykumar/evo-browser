@@ -1,0 +1,1260 @@
+From f84836b7ab1c65cff4eafe5a418f5c2ae5f4879e Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sun, 19 Jul 2026 16:17:07 -0500
+Subject: [PATCH 16/24] evo: implement Figma sidebar and tool rail
+
+---
+ chrome/browser/resources/evo_shell/BUILD.gn   |  15 +
+ .../resources/evo_shell/browser_proxy.ts      |  34 ++
+ .../resources/evo_shell/components/badge.ts   |   9 +
+ .../evo_shell/components/favicon_tile.ts      |  21 ++
+ .../evo_shell/components/favorites_grid.ts    |  14 +
+ .../evo_shell/components/icon_button.ts       |  18 +
+ .../evo_shell/components/list_row.ts          |  27 ++
+ .../evo_shell/components/rail_item.ts         |  27 ++
+ .../evo_shell/components/right_rail.ts        |  46 +++
+ .../evo_shell/components/section_label.ts     |   8 +
+ .../resources/evo_shell/components/sidebar.ts |  75 ++++
+ .../evo_shell/components/space_header.ts      |  20 +
+ .../evo_shell/components/space_switcher.ts    |  37 ++
+ .../evo_shell/components/tab_item.ts          |  59 +++
+ .../browser/resources/evo_shell/evo_icon.ts   |  12 +
+ .../browser/resources/evo_shell/evo_shell.css | 354 ++++++++++++++++++
+ .../browser/resources/evo_shell/evo_shell.ts  |   2 +-
+ chrome/browser/resources/evo_shell/surface.ts |  44 ++-
+ chrome/browser/resources/evo_shell/types.ts   |  54 +++
+ .../ui/evo_shell/evo_shell_coordinator.cc     |  13 +-
+ .../vertical_tab_strip_bottom_container.cc    |   5 +-
+ chrome/test/data/webui/evo_shell/BUILD.gn     |   5 +-
+ .../webui/evo_shell/evo_shell_browsertest.cc  |   4 +
+ .../evo_shell/evo_shell_components_test.ts    |  52 +++
+ .../webui/evo_shell/evo_shell_tokens_test.ts  |   9 +-
+ tools/gritsettings/resource_ids.spec          |   2 +-
+ 26 files changed, 947 insertions(+), 19 deletions(-)
+ create mode 100644 chrome/browser/resources/evo_shell/browser_proxy.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/badge.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/favicon_tile.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/favorites_grid.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/icon_button.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/list_row.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/rail_item.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/right_rail.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/section_label.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/sidebar.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/space_header.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/space_switcher.ts
+ create mode 100644 chrome/browser/resources/evo_shell/components/tab_item.ts
+ create mode 100644 chrome/browser/resources/evo_shell/evo_icon.ts
+ create mode 100644 chrome/browser/resources/evo_shell/types.ts
+ create mode 100644 chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+
+diff --git a/chrome/browser/resources/evo_shell/BUILD.gn b/chrome/browser/resources/evo_shell/BUILD.gn
+index ba18b14250b8dbde3674cbb53c1846bed622e063..baa319975fa9a57042e7fe359cea54ba4ad0dd95 100644
+--- a/chrome/browser/resources/evo_shell/BUILD.gn
++++ b/chrome/browser/resources/evo_shell/BUILD.gn
+@@ -12,9 +12,24 @@ build_webui("build") {
+     "evo_shell_tokens.css",
+   ]
+   ts_files = [
++    "browser_proxy.ts",
++    "components/badge.ts",
++    "components/favicon_tile.ts",
++    "components/favorites_grid.ts",
++    "components/icon_button.ts",
++    "components/list_row.ts",
++    "components/rail_item.ts",
++    "components/right_rail.ts",
++    "components/section_label.ts",
++    "components/sidebar.ts",
++    "components/space_header.ts",
++    "components/space_switcher.ts",
++    "components/tab_item.ts",
++    "evo_icon.ts",
+     "evo_shell.ts",
+     "icons.ts",
+     "surface.ts",
++    "types.ts",
+   ]
+   ts_composite = true
+   ts_deps = [ "//ui/webui/resources/js:build_ts" ]
+diff --git a/chrome/browser/resources/evo_shell/browser_proxy.ts b/chrome/browser/resources/evo_shell/browser_proxy.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ac79e6db506194a2294bd3284c0ad5d5015cb3b6
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/browser_proxy.ts
+@@ -0,0 +1,34 @@
++// Copyright 2026 SK Productions LLC
++
++import {addWebUiListener, sendWithPromise} from 'chrome://resources/js/cr.js';
++
++import type {EvoShellAction, EvoShellSnapshot} from './types.js';
++import type {EvoShellSurface} from './surface.js';
++
++export interface EvoShellBrowserProxy {
++  getSnapshot(): Promise<EvoShellSnapshot>;
++  dispatch(action: EvoShellAction): Promise<EvoShellSnapshot>;
++  ready(surface: EvoShellSurface): Promise<void>;
++  addSnapshotListener(listener: (snapshot: EvoShellSnapshot) => void): void;
++}
++
++class EvoShellBrowserProxyImpl implements EvoShellBrowserProxy {
++  getSnapshot(): Promise<EvoShellSnapshot> {
++    return sendWithPromise('getEvoShellSnapshot');
++  }
++
++  dispatch(action: EvoShellAction): Promise<EvoShellSnapshot> {
++    return sendWithPromise('dispatchEvoShellAction', action);
++  }
++
++  ready(surface: EvoShellSurface): Promise<void> {
++    return sendWithPromise('evoShellReady', surface);
++  }
++
++  addSnapshotListener(listener: (snapshot: EvoShellSnapshot) => void): void {
++    addWebUiListener('evo-shell-snapshot-changed', listener);
++  }
++}
++
++export const evoShellBrowserProxy: EvoShellBrowserProxy =
++    new EvoShellBrowserProxyImpl();
+diff --git a/chrome/browser/resources/evo_shell/components/badge.ts b/chrome/browser/resources/evo_shell/components/badge.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..09c06d497121a58438268849f8dc015229962b06
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/badge.ts
+@@ -0,0 +1,9 @@
++// Copyright 2026 SK Productions LLC
++
++export function badge(value: number): HTMLSpanElement {
++  const element = document.createElement('span');
++  element.className = 'badge';
++  element.textContent = String(value);
++  element.setAttribute('aria-label', `${value} items`);
++  return element;
++}
+diff --git a/chrome/browser/resources/evo_shell/components/favicon_tile.ts b/chrome/browser/resources/evo_shell/components/favicon_tile.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b065f785699fd9702d9342786b818579c7549dc2
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/favicon_tile.ts
+@@ -0,0 +1,21 @@
++// Copyright 2026 SK Productions LLC
++
++import {evoIcon} from '../evo_icon.js';
++import type {EvoShellFavorite} from '../types.js';
++
++export function faviconTile(
++    favorite: EvoShellFavorite, onOpen: (id: string) => void): HTMLButtonElement {
++  const tile = document.createElement('button');
++  tile.className = 'favicon-tile';
++  tile.type = 'button';
++  tile.title = favorite.title;
++  tile.setAttribute('aria-label', favorite.title);
++  const image = document.createElement('img');
++  image.alt = '';
++  image.src = favorite.faviconUrl;
++  image.addEventListener('error', () => image.replaceWith(evoIcon('globe', 17)),
++                         {once: true});
++  tile.append(image);
++  tile.addEventListener('click', () => onOpen(favorite.id));
++  return tile;
++}
+diff --git a/chrome/browser/resources/evo_shell/components/favorites_grid.ts b/chrome/browser/resources/evo_shell/components/favorites_grid.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fa0696b27dc5367b71d53db1faf00a850c019fce
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/favorites_grid.ts
+@@ -0,0 +1,14 @@
++// Copyright 2026 SK Productions LLC
++
++import {faviconTile} from './favicon_tile.js';
++import type {EvoShellFavorite} from '../types.js';
++
++export function favoritesGrid(
++    favorites: EvoShellFavorite[], onOpen: (id: string) => void): HTMLDivElement {
++  const grid = document.createElement('div');
++  grid.className = 'favorites-grid';
++  for (const favorite of favorites) {
++    grid.append(faviconTile(favorite, onOpen));
++  }
++  return grid;
++}
+diff --git a/chrome/browser/resources/evo_shell/components/icon_button.ts b/chrome/browser/resources/evo_shell/components/icon_button.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..02b0bad37a9b758efa7d69883e9aaf285d297fb3
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/icon_button.ts
+@@ -0,0 +1,18 @@
++// Copyright 2026 SK Productions LLC
++
++import {evoIcon} from '../evo_icon.js';
++import type {EvoIconName} from '../icons.js';
++
++export function iconButton(
++    iconName: EvoIconName, label: string, onClick?: () => void): HTMLButtonElement {
++  const button = document.createElement('button');
++  button.className = 'icon-button';
++  button.type = 'button';
++  button.setAttribute('aria-label', label);
++  button.title = label;
++  button.append(evoIcon(iconName));
++  if (onClick) {
++    button.addEventListener('click', onClick);
++  }
++  return button;
++}
+diff --git a/chrome/browser/resources/evo_shell/components/list_row.ts b/chrome/browser/resources/evo_shell/components/list_row.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..7dec48e00fb79fb5e02c69acbab327359dd075d0
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/list_row.ts
+@@ -0,0 +1,27 @@
++// Copyright 2026 SK Productions LLC
++
++import {evoIcon} from '../evo_icon.js';
++import {tabItem} from './tab_item.js';
++import type {EvoShellFolder} from '../types.js';
++import type {TabItemCallbacks} from './tab_item.js';
++
++export function folderRow(
++    folder: EvoShellFolder, callbacks: TabItemCallbacks): HTMLDivElement {
++  const container = document.createElement('div');
++  container.className = 'folder-row';
++  const header = document.createElement('div');
++  header.className = 'list-row folder-header';
++  header.append(evoIcon('folder', 17));
++  const title = document.createElement('span');
++  title.textContent = folder.title;
++  header.append(title);
++  container.append(header);
++
++  const children = document.createElement('div');
++  children.className = 'folder-children';
++  for (const tab of folder.children) {
++    children.append(tabItem({...tab, pinned: true}, callbacks));
++  }
++  container.append(children);
++  return container;
++}
+diff --git a/chrome/browser/resources/evo_shell/components/rail_item.ts b/chrome/browser/resources/evo_shell/components/rail_item.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..1ea2d08cb92267496e8117f5978b1315d565b5ff
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/rail_item.ts
+@@ -0,0 +1,27 @@
++// Copyright 2026 SK Productions LLC
++
++import {evoIcon} from '../evo_icon.js';
++import type {EvoIconName} from '../icons.js';
++
++export interface RailItemDefinition {
++  icon: EvoIconName;
++  label: string;
++  target: string;
++}
++
++export function railItem(
++    item: RailItemDefinition, active: boolean,
++    onSelect: (target: string) => void): HTMLButtonElement {
++  const button = document.createElement('button');
++  button.className = 'rail-item';
++  button.classList.toggle('is-active', active);
++  button.type = 'button';
++  button.dataset['target'] = item.target;
++  button.setAttribute('aria-pressed', String(active));
++  button.append(evoIcon(item.icon, 19));
++  const label = document.createElement('span');
++  label.textContent = item.label;
++  button.append(label);
++  button.addEventListener('click', () => onSelect(item.target));
++  return button;
++}
+diff --git a/chrome/browser/resources/evo_shell/components/right_rail.ts b/chrome/browser/resources/evo_shell/components/right_rail.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..f41721155045fdb33657591057e3ae22d6a9c5c8
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/right_rail.ts
+@@ -0,0 +1,46 @@
++// Copyright 2026 SK Productions LLC
++
++import {railItem} from './rail_item.js';
++import type {RailItemDefinition} from './rail_item.js';
++import type {EvoShellAction, EvoShellSnapshot} from '../types.js';
++
++// Placeholder information architecture. Keeping this declarative lets the AI,
++// split-view, and utility epics replace targets without restructuring the rail.
++export const TOP_RAIL_ITEMS: readonly RailItemDefinition[] = [
++  {icon: 'sparkles', label: 'Ask Evo', target: 'ask-evo'},
++  {icon: 'columns-2', label: 'Split', target: 'split'},
++  {icon: 'file-text', label: 'Notes', target: 'notes'},
++  {icon: 'bookmark', label: 'Saved', target: 'saved'},
++  {icon: 'download', label: 'Downloads', target: 'downloads'},
++  {icon: 'clock', label: 'History', target: 'history'},
++  {icon: 'puzzle', label: 'Extensions', target: 'extensions'},
++];
++
++export const BOTTOM_RAIL_ITEMS: readonly RailItemDefinition[] = [
++  {icon: 'settings-2', label: 'Settings', target: 'settings'},
++  {icon: 'ellipsis', label: 'More', target: 'more'},
++];
++
++export function rightRail(
++    snapshot: EvoShellSnapshot,
++    dispatch: (action: EvoShellAction) => void): HTMLElement {
++  const shell = document.createElement('nav');
++  shell.className = 'evo-shell-surface right-rail';
++  shell.dataset['surface'] = 'rail';
++  shell.setAttribute('aria-label', 'Evo tools');
++
++  const group = document.createElement('div');
++  group.className = 'rail-group';
++  const bottom = document.createElement('div');
++  bottom.className = 'rail-group rail-group-bottom';
++  const select = (target: string) =>
++      dispatch({type: 'selectRailTarget', target});
++  for (const item of TOP_RAIL_ITEMS) {
++    group.append(railItem(item, snapshot.activeRailTarget === item.target, select));
++  }
++  for (const item of BOTTOM_RAIL_ITEMS) {
++    bottom.append(railItem(item, snapshot.activeRailTarget === item.target, select));
++  }
++  shell.append(group, bottom);
++  return shell;
++}
+diff --git a/chrome/browser/resources/evo_shell/components/section_label.ts b/chrome/browser/resources/evo_shell/components/section_label.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..0c9db58b6a66456f46d11f99a6d17be18f594365
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/section_label.ts
+@@ -0,0 +1,8 @@
++// Copyright 2026 SK Productions LLC
++
++export function sectionLabel(text: string): HTMLDivElement {
++  const label = document.createElement('div');
++  label.className = 'section-label';
++  label.textContent = text;
++  return label;
++}
+diff --git a/chrome/browser/resources/evo_shell/components/sidebar.ts b/chrome/browser/resources/evo_shell/components/sidebar.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..17acf3f883640c979649a2ee19f17c4091bbc49c
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/sidebar.ts
+@@ -0,0 +1,75 @@
++// Copyright 2026 SK Productions LLC
++
++import {evoIcon} from '../evo_icon.js';
++import {favoritesGrid} from './favorites_grid.js';
++import {folderRow} from './list_row.js';
++import {sectionLabel} from './section_label.js';
++import {spaceHeader} from './space_header.js';
++import {spaceSwitcher} from './space_switcher.js';
++import {tabItem} from './tab_item.js';
++import type {EvoShellAction, EvoShellSnapshot} from '../types.js';
++
++export function sidebar(
++    snapshot: EvoShellSnapshot,
++    dispatch: (action: EvoShellAction) => void): HTMLElement {
++  const shell = document.createElement('main');
++  shell.className = 'evo-shell-surface sidebar';
++  shell.dataset['surface'] = 'sidebar';
++  shell.setAttribute('aria-label', 'Evo sidebar');
++
++  const trafficReservation = document.createElement('div');
++  trafficReservation.className = 'traffic-light-reservation';
++  trafficReservation.setAttribute('aria-hidden', 'true');
++  shell.append(trafficReservation);
++
++  const activeSpace =
++      snapshot.spaces.find(space => space.id === snapshot.activeSpaceId);
++  shell.append(spaceHeader(
++      activeSpace,
++      () => dispatch({type: 'setSidebarCollapsed', collapsed: true})));
++
++  const body = document.createElement('div');
++  body.className = 'sidebar-body';
++  body.append(sectionLabel('FAVORITES'));
++  body.append(favoritesGrid(
++      snapshot.favorites,
++      favoriteId => dispatch({type: 'openFavorite', favoriteId})));
++  body.append(sectionLabel('PINNED'));
++
++  const callbacks = {
++    activate: (tabId: string) => dispatch({type: 'activateTab', tabId}),
++    close: (tabId: string) => dispatch({type: 'closeTab', tabId}),
++  };
++  for (const tab of snapshot.pinnedTabs) {
++    body.append(tabItem(tab, callbacks));
++  }
++  for (const folder of snapshot.folders) {
++    body.append(folderRow(folder, callbacks));
++  }
++
++  const clearRow = document.createElement('button');
++  clearRow.className = 'clear-row';
++  clearRow.type = 'button';
++  clearRow.textContent = 'Clear';
++  clearRow.title = 'Clear semantics are deferred';
++  body.append(clearRow);
++
++  const newTab = document.createElement('button');
++  newTab.className = 'new-tab-row';
++  newTab.type = 'button';
++  newTab.append(evoIcon('plus', 17));
++  const newTabText = document.createElement('span');
++  newTabText.textContent = 'New Tab';
++  newTab.append(newTabText);
++  newTab.addEventListener('click', () => dispatch({type: 'newTab'}));
++  body.append(newTab);
++
++  for (const tab of snapshot.openTabs) {
++    body.append(tabItem(tab, callbacks));
++  }
++  shell.append(body);
++  shell.append(spaceSwitcher(
++      snapshot.spaces, snapshot.activeSpaceId,
++      spaceId => dispatch({type: 'selectSpace', spaceId})));
++  return shell;
++}
+diff --git a/chrome/browser/resources/evo_shell/components/space_header.ts b/chrome/browser/resources/evo_shell/components/space_header.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2d9f1d28de03414c517cec5780986c50406238cb
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/space_header.ts
+@@ -0,0 +1,20 @@
++// Copyright 2026 SK Productions LLC
++
++import {iconButton} from './icon_button.js';
++import type {EvoShellSpace} from '../types.js';
++
++export function spaceHeader(
++    space: EvoShellSpace|undefined, onCollapse: () => void): HTMLElement {
++  const header = document.createElement('header');
++  header.className = 'space-header';
++  const identity = document.createElement('div');
++  identity.className = 'space-identity';
++  const orb = document.createElement('span');
++  orb.className = 'agent-orb';
++  orb.setAttribute('aria-hidden', 'true');
++  const title = document.createElement('strong');
++  title.textContent = space?.name || 'Agent';
++  identity.append(orb, title);
++  header.append(identity, iconButton('panel-left', 'Collapse sidebar', onCollapse));
++  return header;
++}
+diff --git a/chrome/browser/resources/evo_shell/components/space_switcher.ts b/chrome/browser/resources/evo_shell/components/space_switcher.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e5d52260250b2cbfb004139a53130aeacf1c5ab5
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/space_switcher.ts
+@@ -0,0 +1,37 @@
++// Copyright 2026 SK Productions LLC
++
++import {badge} from './badge.js';
++import type {EvoShellSpace} from '../types.js';
++
++export function spaceSwitcher(
++    spaces: EvoShellSpace[], activeSpaceId: string,
++    onSelect: (id: string) => void): HTMLElement {
++  const nav = document.createElement('nav');
++  nav.className = 'space-switcher';
++  nav.setAttribute('aria-label', 'Spaces');
++  for (const space of spaces) {
++    const button = document.createElement('button');
++    button.className = 'space-switcher-item';
++    button.classList.toggle('is-active', space.id === activeSpaceId);
++    button.type = 'button';
++    button.title = space.name;
++    button.setAttribute('aria-label', `Switch to ${space.name}`);
++    button.dataset['mode'] = space.mode;
++    const dot = document.createElement('span');
++    dot.className = 'space-dot';
++    button.append(dot);
++    if (space.badge) {
++      button.append(badge(space.badge));
++    }
++    button.addEventListener('click', () => onSelect(space.id));
++    nav.append(button);
++  }
++  const add = document.createElement('button');
++  add.className = 'space-add-placeholder';
++  add.type = 'button';
++  add.disabled = true;
++  add.textContent = '+';
++  add.title = 'Space management is coming later';
++  nav.append(add);
++  return nav;
++}
+diff --git a/chrome/browser/resources/evo_shell/components/tab_item.ts b/chrome/browser/resources/evo_shell/components/tab_item.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..f8878827184d192d4f72897f74f06edabce752bc
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/tab_item.ts
+@@ -0,0 +1,59 @@
++// Copyright 2026 SK Productions LLC
++
++import {evoIcon} from '../evo_icon.js';
++import type {EvoShellTab} from '../types.js';
++
++export interface TabItemCallbacks {
++  activate(id: string): void;
++  close(id: string): void;
++}
++
++export function tabItem(
++    tab: EvoShellTab, callbacks: TabItemCallbacks): HTMLDivElement {
++  const row = document.createElement('div');
++  row.className = 'tab-item';
++  row.classList.toggle('is-active', tab.active);
++  row.classList.toggle('is-loading', tab.loading);
++  row.classList.toggle('is-pinned', tab.pinned);
++  row.dataset['tabId'] = tab.id;
++
++  const activate = document.createElement('button');
++  activate.className = 'tab-item-main';
++  activate.type = 'button';
++  activate.setAttribute('aria-label', `Open ${tab.title}`);
++
++  const favicon = document.createElement('img');
++  favicon.className = 'tab-favicon';
++  favicon.alt = '';
++  favicon.src = tab.faviconUrl;
++  favicon.addEventListener(
++      'error', () => favicon.replaceWith(evoIcon('globe', 16)), {once: true});
++  activate.append(favicon);
++
++  const text = document.createElement('span');
++  text.className = 'tab-item-text';
++  const title = document.createElement('span');
++  title.className = 'tab-item-title';
++  title.textContent = tab.title || 'New Tab';
++  text.append(title);
++  if (tab.url) {
++    const subtitle = document.createElement('span');
++    subtitle.className = 'tab-item-subtitle';
++    subtitle.textContent = tab.url;
++    text.append(subtitle);
++  }
++  activate.append(text);
++  activate.addEventListener('click', () => callbacks.activate(tab.id));
++  row.append(activate);
++
++  if (!tab.pinned) {
++    const close = document.createElement('button');
++    close.className = 'tab-close';
++    close.type = 'button';
++    close.setAttribute('aria-label', `Close ${tab.title}`);
++    close.append(evoIcon('x', 14));
++    close.addEventListener('click', () => callbacks.close(tab.id));
++    row.append(close);
++  }
++  return row;
++}
+diff --git a/chrome/browser/resources/evo_shell/evo_icon.ts b/chrome/browser/resources/evo_shell/evo_icon.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..6e34b1e92b7b2d552c1b7533c28e02400fdaf4e3
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/evo_icon.ts
+@@ -0,0 +1,12 @@
++// Copyright 2026 SK Productions LLC
++
++import {createEvoIcon} from './icons.js';
++import type {EvoIconName} from './icons.js';
++
++export function evoIcon(name: EvoIconName, size = 18): SVGSVGElement {
++  const icon = createEvoIcon(name);
++  icon.classList.add('evo-icon');
++  icon.style.width = `${size}px`;
++  icon.style.height = `${size}px`;
++  return icon;
++}
+diff --git a/chrome/browser/resources/evo_shell/evo_shell.css b/chrome/browser/resources/evo_shell/evo_shell.css
+index 8a02bde8bbb0d5d18aaf9ba259934c61fb688345..c2b7d9267f04a128a253433a4e392db8b2654d9d 100644
+--- a/chrome/browser/resources/evo_shell/evo_shell.css
++++ b/chrome/browser/resources/evo_shell/evo_shell.css
+@@ -40,3 +40,357 @@ body {
+ .evo-shell-surface[data-surface='rail'] {
+   background-color: var(--surface-panel);
+ }
++
++button {
++  color: inherit;
++  font: inherit;
++}
++
++button:focus-visible {
++  outline: 2px solid var(--accent-core);
++  outline-offset: 1px;
++}
++
++.sidebar {
++  display: flex;
++  flex-direction: column;
++  min-height: 0;
++  padding: 0 var(--space-lg) var(--space-md);
++  overflow: hidden;
++}
++
++.traffic-light-reservation {
++  flex: 0 0 34px;
++}
++
++.space-header {
++  display: flex;
++  flex: 0 0 44px;
++  align-items: center;
++  justify-content: space-between;
++  margin-bottom: var(--space-md);
++}
++
++.space-identity {
++  display: flex;
++  min-width: 0;
++  align-items: center;
++  gap: var(--space-sm);
++  font-family: var(--type-title-family);
++  font-size: var(--type-title-size);
++  line-height: var(--type-title-line);
++  letter-spacing: var(--type-title-tracking);
++}
++
++.agent-orb {
++  width: 18px;
++  height: 18px;
++  flex: 0 0 auto;
++  border: 1px solid rgba(255, 255, 255, .3);
++  border-radius: var(--radius-full);
++  background: linear-gradient(135deg, #57dcd6, #8f7bf3);
++  box-shadow: 0 0 14px rgba(87, 220, 214, .28);
++}
++
++.icon-button,
++.tab-close,
++.space-switcher-item,
++.space-add-placeholder {
++  display: inline-grid;
++  padding: 0;
++  border: 0;
++  background: transparent;
++  place-items: center;
++}
++
++.icon-button {
++  width: 32px;
++  height: 32px;
++  border-radius: var(--radius-sm);
++  color: var(--ink-2);
++}
++
++.icon-button:hover {
++  color: var(--ink-1);
++  background: var(--surface-hover);
++}
++
++.sidebar-body {
++  min-height: 0;
++  flex: 1 1 auto;
++  padding-right: var(--space-2xs);
++  overflow-x: hidden;
++  overflow-y: auto;
++  scrollbar-width: none;
++}
++
++.sidebar-body::-webkit-scrollbar {
++  display: none;
++}
++
++.section-label {
++  margin: var(--space-md) 0 var(--space-sm);
++  color: var(--ink-3);
++  font-family: var(--type-label-family);
++  font-size: var(--type-label-size);
++  font-weight: var(--type-label-weight);
++  line-height: var(--type-label-line);
++  letter-spacing: var(--type-label-tracking);
++}
++
++.favorites-grid {
++  display: grid;
++  grid-template-columns: repeat(6, 34px);
++  gap: var(--space-sm);
++  width: 244px;
++}
++
++.favicon-tile {
++  display: grid;
++  width: 34px;
++  height: 34px;
++  padding: 0;
++  border: 1px solid var(--hairline);
++  border-radius: var(--radius-md);
++  color: var(--ink-2);
++  background: var(--surface-subtle);
++  box-shadow: var(--elevation-e1);
++  place-items: center;
++}
++
++.favicon-tile:hover {
++  border-color: var(--hairline-strong);
++  background: var(--surface-hover);
++}
++
++.favicon-tile img,
++.tab-favicon {
++  width: 17px;
++  height: 17px;
++  object-fit: contain;
++}
++
++.tab-item {
++  position: relative;
++  display: flex;
++  width: 100%;
++  min-height: 36px;
++  align-items: stretch;
++  border-radius: var(--radius-sm);
++}
++
++.tab-item:hover,
++.tab-item.is-active {
++  background: var(--surface-hover);
++}
++
++.tab-item.is-active::before {
++  position: absolute;
++  top: 8px;
++  bottom: 8px;
++  left: 0;
++  width: 2px;
++  border-radius: var(--radius-full);
++  background: var(--accent-core);
++  content: '';
++}
++
++.tab-item-main,
++.new-tab-row,
++.clear-row {
++  display: flex;
++  min-width: 0;
++  flex: 1;
++  align-items: center;
++  padding: 0 var(--space-sm);
++  border: 0;
++  border-radius: var(--radius-sm);
++  color: var(--ink-2);
++  background: transparent;
++  gap: var(--space-sm);
++  text-align: left;
++}
++
++.tab-item-main:hover,
++.new-tab-row:hover,
++.clear-row:hover {
++  color: var(--ink-1);
++}
++
++.tab-item-text {
++  display: flex;
++  min-width: 0;
++  flex: 1;
++  flex-direction: column;
++}
++
++.tab-item-title,
++.tab-item-subtitle {
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.tab-item-subtitle {
++  color: var(--ink-3);
++  font-family: var(--type-mono-family);
++  font-size: 10px;
++  line-height: 12px;
++}
++
++.tab-close {
++  width: 28px;
++  flex: 0 0 28px;
++  border-radius: var(--radius-sm);
++  color: var(--ink-3);
++  opacity: 0;
++}
++
++.tab-item:hover .tab-close,
++.tab-close:focus-visible {
++  opacity: 1;
++}
++
++.tab-close:hover {
++  color: var(--ink-1);
++  background: var(--surface-hover);
++}
++
++.tab-item.is-loading .tab-favicon {
++  animation: evo-pulse 1.1s ease-in-out infinite alternate;
++}
++
++@keyframes evo-pulse {
++  to { opacity: .35; }
++}
++
++.list-row {
++  display: flex;
++  min-height: 36px;
++  align-items: center;
++  padding: 0 var(--space-sm);
++  color: var(--ink-2);
++  gap: var(--space-sm);
++}
++
++.folder-children {
++  padding-left: var(--space-lg);
++}
++
++.clear-row {
++  width: 100%;
++  min-height: 30px;
++  justify-content: flex-end;
++  margin: var(--space-xs) 0;
++  border-top: 1px solid var(--hairline);
++  border-radius: 0;
++  color: var(--ink-3);
++  font-size: var(--type-label-size);
++}
++
++.new-tab-row {
++  width: 100%;
++  min-height: 36px;
++}
++
++.space-switcher {
++  display: flex;
++  min-height: 46px;
++  flex: 0 0 46px;
++  align-items: center;
++  justify-content: center;
++  padding-top: var(--space-sm);
++  border-top: 1px solid var(--hairline);
++  gap: var(--space-sm);
++}
++
++.space-switcher-item,
++.space-add-placeholder {
++  position: relative;
++  width: 28px;
++  height: 28px;
++  border-radius: var(--radius-sm);
++  color: var(--ink-3);
++}
++
++.space-switcher-item:hover,
++.space-switcher-item.is-active {
++  color: var(--ink-1);
++  background: var(--surface-hover);
++}
++
++.space-dot {
++  width: 7px;
++  height: 7px;
++  border-radius: var(--radius-full);
++  background: var(--accent-core);
++  box-shadow: 0 0 9px color-mix(in srgb, var(--accent-core) 55%, transparent);
++}
++
++.space-switcher-item.is-active .space-dot {
++  width: 9px;
++  height: 9px;
++}
++
++.badge {
++  position: absolute;
++  top: -3px;
++  right: -3px;
++  min-width: 14px;
++  height: 14px;
++  padding: 0 3px;
++  border-radius: var(--radius-full);
++  color: var(--on-accent);
++  background: var(--accent-core);
++  font-size: 9px;
++  font-weight: 600;
++  line-height: 14px;
++}
++
++.right-rail {
++  display: flex;
++  flex-direction: column;
++  justify-content: space-between;
++  padding: var(--space-xl) var(--space-sm) var(--space-md);
++  overflow: hidden;
++}
++
++.rail-group {
++  display: flex;
++  flex-direction: column;
++  gap: var(--space-xs);
++}
++
++.rail-group-bottom {
++  padding-top: var(--space-sm);
++  border-top: 1px solid var(--hairline);
++}
++
++.rail-item {
++  display: flex;
++  width: 54px;
++  min-height: 50px;
++  flex-direction: column;
++  align-items: center;
++  justify-content: center;
++  padding: var(--space-xs) var(--space-2xs);
++  border: 0;
++  border-radius: var(--radius-sm);
++  color: var(--ink-3);
++  background: transparent;
++  font-family: var(--type-label-family);
++  font-size: 9px;
++  font-weight: var(--type-label-weight);
++  line-height: 12px;
++  gap: var(--space-xs);
++}
++
++.rail-item:hover,
++.rail-item.is-active {
++  color: var(--ink-1);
++  background: var(--surface-hover);
++}
++
++.rail-item.is-active {
++  box-shadow: inset 0 0 0 1px var(--hairline);
++}
+diff --git a/chrome/browser/resources/evo_shell/evo_shell.ts b/chrome/browser/resources/evo_shell/evo_shell.ts
+index 2394dc8e93ceb2dcb733f415767a1a723fe193ac..29b7e186475cd428d46b381e91c7a34969d21ad7 100644
+--- a/chrome/browser/resources/evo_shell/evo_shell.ts
++++ b/chrome/browser/resources/evo_shell/evo_shell.ts
+@@ -5,5 +5,5 @@ import {resolveEvoShellSurface, mountEvoShellSurface} from './surface.js';
+ const root = document.querySelector<HTMLElement>('#evo-shell-root');
+ const surface = resolveEvoShellSurface(window.location.search);
+ if (root) {
+-  mountEvoShellSurface(root, surface);
++  void mountEvoShellSurface(root, surface);
+ }
+diff --git a/chrome/browser/resources/evo_shell/surface.ts b/chrome/browser/resources/evo_shell/surface.ts
+index 23f1d518765418e9a1170acaa4ddc2ae96fcfd60..468ca503839b31a5dfae6cc33ae6c2bcc11d2275 100644
+--- a/chrome/browser/resources/evo_shell/surface.ts
++++ b/chrome/browser/resources/evo_shell/surface.ts
+@@ -2,13 +2,18 @@
+ 
+ export type EvoShellSurface = 'sidebar'|'rail';
+ 
++import {evoShellBrowserProxy} from './browser_proxy.js';
++import {sidebar} from './components/sidebar.js';
++import {rightRail} from './components/right_rail.js';
++import type {EvoShellAction, EvoShellSnapshot} from './types.js';
++
+ export function resolveEvoShellSurface(search: string): EvoShellSurface|null {
+   const value = new URLSearchParams(search).get('surface');
+   return value === 'sidebar' || value === 'rail' ? value : null;
+ }
+ 
+-export function mountEvoShellSurface(
+-    root: HTMLElement, surface: EvoShellSurface|null): boolean {
++export async function mountEvoShellSurface(
++    root: HTMLElement, surface: EvoShellSurface|null): Promise<boolean> {
+   root.replaceChildren();
+   if (!surface) {
+     root.dataset['surface'] = 'invalid';
+@@ -17,11 +22,34 @@ export function mountEvoShellSurface(
+ 
+   document.documentElement.dataset['themeMode'] = 'agent';
+   root.dataset['surface'] = surface;
+-  const shell = document.createElement('main');
+-  shell.className = 'evo-shell-surface';
+-  shell.dataset['surface'] = surface;
+-  shell.setAttribute('aria-label',
+-                     surface === 'sidebar' ? 'Evo sidebar' : 'Evo tool rail');
+-  root.append(shell);
++  let snapshot: EvoShellSnapshot;
++  try {
++    snapshot = await evoShellBrowserProxy.getSnapshot();
++  } catch {
++    root.textContent = 'Evo shell unavailable';
++    return false;
++  }
++
++  const render = (nextSnapshot: EvoShellSnapshot) => {
++    snapshot = nextSnapshot;
++    const activeSpace =
++        snapshot.spaces.find(space => space.id === snapshot.activeSpaceId);
++    document.documentElement.dataset['themeMode'] = activeSpace?.mode || 'agent';
++    if (surface === 'sidebar') {
++      const dispatch = (action: EvoShellAction) => {
++        void evoShellBrowserProxy.dispatch(action).then(render);
++      };
++      root.replaceChildren(sidebar(snapshot, dispatch));
++      return;
++    }
++
++    const dispatch = (action: EvoShellAction) => {
++      void evoShellBrowserProxy.dispatch(action).then(render);
++    };
++    root.replaceChildren(rightRail(snapshot, dispatch));
++  };
++  render(snapshot);
++  evoShellBrowserProxy.addSnapshotListener(render);
++  await evoShellBrowserProxy.ready(surface);
+   return true;
+ }
+diff --git a/chrome/browser/resources/evo_shell/types.ts b/chrome/browser/resources/evo_shell/types.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..8e4d61d864bde8057c9a9b503d6d1ce3a9b9c871
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/types.ts
+@@ -0,0 +1,54 @@
++// Copyright 2026 SK Productions LLC
++
++export type EvoThemeMode = 'agent'|'personal'|'work'|'media'|'focus';
++
++export interface EvoShellTab {
++  id: string;
++  title: string;
++  url?: string;
++  faviconUrl: string;
++  active: boolean;
++  loading: boolean;
++  pinned: boolean;
++}
++
++export interface EvoShellFavorite {
++  id: string;
++  title: string;
++  faviconUrl: string;
++}
++
++export interface EvoShellFolder {
++  id: string;
++  title: string;
++  children: EvoShellTab[];
++}
++
++export interface EvoShellSpace {
++  id: string;
++  name: string;
++  mode: EvoThemeMode;
++  badge?: number;
++}
++
++export interface EvoShellSnapshot {
++  activeSpaceId: string;
++  spaces: EvoShellSpace[];
++  favorites: EvoShellFavorite[];
++  pinnedTabs: EvoShellTab[];
++  folders: EvoShellFolder[];
++  openTabs: EvoShellTab[];
++  sidebarCollapsed: boolean;
++  activeRailTarget: string;
++}
++
++export type EvoSidebarAction =
++    {type: 'activateTab', tabId: string}|
++    {type: 'closeTab', tabId: string}|
++    {type: 'newTab'}|
++    {type: 'openFavorite', favoriteId: string}|
++    {type: 'selectSpace', spaceId: string}|
++    {type: 'setSidebarCollapsed', collapsed: boolean};
++
++export type EvoRailAction = {type: 'selectRailTarget', target: string};
++export type EvoShellAction = EvoSidebarAction|EvoRailAction;
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+index 0e4c0be4f838904609b4225d9950fa5ee1ceee25..bd27abdde1cb9c4589ef431bddb826f08a75e16d 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+@@ -103,6 +103,9 @@ base::DictValue EvoShellCoordinator::BuildSnapshot() const {
+   snapshot.sidebar_collapsed = host_->sidebar_collapsed();
+   snapshot.active_rail_target = active_rail_target_;
+ 
++  snapshot.spaces.push_back(
++      {.id = "default", .name = "Agent", .mode = kThemeModes[0]});
++
+   const auto groups = model->group_model()->ListTabGroups();
+   const std::optional<tab_groups::TabGroupId> focused =
+       model->GetFocusedGroup();
+@@ -114,12 +117,12 @@ base::DictValue EvoShellCoordinator::BuildSnapshot() const {
+          .name = base::UTF16ToUTF8(
+              title.empty() ? u"Space " + base::NumberToString16(index + 1)
+                            : title),
+-         .mode = kThemeModes[index % kThemeModes.size()]});
++         .mode = kThemeModes[(index + 1) % kThemeModes.size()]});
+   }
+   if (focused) {
+     snapshot.active_space_id = focused->ToString();
+   } else if (!snapshot.spaces.empty()) {
+-    snapshot.active_space_id = snapshot.spaces.front().id;
++    snapshot.active_space_id = "default";
+   }
+ 
+   for (const auto& favorite : kFavorites) {
+@@ -177,11 +180,15 @@ base::DictValue EvoShellCoordinator::DispatchAction(
+   } else if (*type == "selectSpace") {
+     const std::string* id = action.FindString("spaceId");
+     if (id) {
++      if (*id == "default") {
++        model->SetFocusedGroup(std::nullopt);
++        host_->SetTheme(EvoNativeTheme::kAgent);
++      }
+       const auto groups = model->group_model()->ListTabGroups();
+       for (size_t index = 0; index < groups.size(); ++index) {
+         if (*id == groups[index].ToString()) {
+           model->SetFocusedGroup(groups[index]);
+-          host_->SetTheme(static_cast<EvoNativeTheme>(index % 5));
++          host_->SetTheme(static_cast<EvoNativeTheme>((index + 1) % 5));
+           break;
+         }
+       }
+diff --git a/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.cc b/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.cc
+index c7cd20295dbbec49de48a0d43c62349609ab96b4..e3b0206496afba0fcc6a40d1510b258ea2c4c108 100644
+--- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.cc
++++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.cc
+@@ -361,8 +361,11 @@ void VerticalTabStripBottomContainer::UpdateButtonStyles(bool collapsed) {
+ 
+   // Setting button's layout based on collapsed state
+   SetOrientation(orientation);
++  // The expanded bottom container consumes the sidebar's remaining height.
++  // Align its controls to the trailing cross-axis edge so Evo's Space rail is
++  // anchored to the bottom instead of appearing directly below the tab list.
+   SetCrossAxisAlignment(collapsed ? views::LayoutAlignment::kStretch
+-                                  : views::LayoutAlignment::kStart);
++                                  : views::LayoutAlignment::kEnd);
+   space_buttons_->SetOrientation(orientation);
+ 
+   new_tab_button_->SetProperty(
+diff --git a/chrome/test/data/webui/evo_shell/BUILD.gn b/chrome/test/data/webui/evo_shell/BUILD.gn
+index 983eb24442296250a7384f5bcfc61e54126f087c..44ca5caea9fe8ce102ac508833aa50886fc2908b 100644
+--- a/chrome/test/data/webui/evo_shell/BUILD.gn
++++ b/chrome/test/data/webui/evo_shell/BUILD.gn
+@@ -7,7 +7,10 @@ assert(!is_android)
+ build_webui_tests("build") {
+   cc_test_files = [ "evo_shell_browsertest.cc" ]
+ 
+-  files = [ "evo_shell_tokens_test.ts" ]
++  files = [
++    "evo_shell_components_test.ts",
++    "evo_shell_tokens_test.ts",
++  ]
+ 
+   ts_path_mappings = [ "chrome://evo-shell/*|" + rebase_path(
+                            "$root_gen_dir/chrome/browser/resources/evo_shell/tsc/*",
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+index f7dfc2b9af57351533eb07760c34f2a219b99295..b49d24585ad7642f2b28940effceee20f5a9825c 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
++++ b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+@@ -19,3 +19,7 @@ class EvoShellUIBrowserTest : public WebUIMochaBrowserTest {
+ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest, Foundation) {
+   RunTest("evo_shell/evo_shell_tokens_test.js", "mocha.run()");
+ }
++
++IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest, Components) {
++  RunTest("evo_shell/evo_shell_components_test.js", "mocha.run()");
++}
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..5217052b470361d2afb7f2b1fc6da3634ad00b79
+--- /dev/null
++++ b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+@@ -0,0 +1,52 @@
++// Copyright 2026 SK Productions LLC
++
++import {rightRail, TOP_RAIL_ITEMS} from 'chrome://evo-shell/components/right_rail.js';
++import {sidebar} from 'chrome://evo-shell/components/sidebar.js';
++import type {EvoShellAction, EvoShellSnapshot} from 'chrome://evo-shell/types.js';
++import {assertEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
++
++function snapshot(): EvoShellSnapshot {
++  return {
++    activeSpaceId: 'default',
++    spaces: [
++      {id: 'default', name: 'Agent', mode: 'agent'},
++      {id: 'work', name: 'Work', mode: 'work'},
++    ],
++    favorites: [{id: 'github', title: 'GitHub', faviconUrl: 'github.png'}],
++    pinnedTabs: [],
++    folders: [],
++    openTabs: [{
++      id: 'tab-1', title: 'Evo', faviconUrl: 'evo.png', active: true,
++      loading: false, pinned: false,
++    }],
++    sidebarCollapsed: false,
++    activeRailTarget: 'ask-evo',
++  };
++}
++
++suite('EvoShellComponents', () => {
++  test('PinsSpaceSwitcherToSidebarBottom', () => {
++    const view = sidebar(snapshot(), () => {});
++    assertEquals('space-switcher', view.lastElementChild!.className);
++    assertEquals(2, view.querySelectorAll('.space-switcher-item').length);
++    assertTrue(view.querySelector('.space-switcher-item.is-active') !== null);
++  });
++
++  test('SidebarDispatchesLiveTabAndSpaceActions', () => {
++    const actions: EvoShellAction[] = [];
++    const view = sidebar(snapshot(), action => actions.push(action));
++    (view.querySelector('.tab-item-main') as HTMLButtonElement).click();
++    (view.querySelectorAll('.space-switcher-item')[1] as HTMLButtonElement).click();
++    assertEquals('activateTab', actions[0]!.type);
++    assertEquals('selectSpace', actions[1]!.type);
++  });
++
++  test('RailIsDataDrivenAndHasOneActiveItem', () => {
++    const actions: EvoShellAction[] = [];
++    const view = rightRail(snapshot(), action => actions.push(action));
++    assertEquals(TOP_RAIL_ITEMS.length + 2, view.querySelectorAll('.rail-item').length);
++    assertEquals(1, view.querySelectorAll('.rail-item.is-active').length);
++    (view.querySelector('[data-target="split"]') as HTMLButtonElement).click();
++    assertEquals('selectRailTarget', actions[0]!.type);
++  });
++});
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_tokens_test.ts b/chrome/test/data/webui/evo_shell/evo_shell_tokens_test.ts
+index 2b72a6b54933bedf03f6110750e1875f28b947a6..e532752c0386c6d66550b0440933652964327b91 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_tokens_test.ts
++++ b/chrome/test/data/webui/evo_shell/evo_shell_tokens_test.ts
+@@ -30,19 +30,20 @@ suite('EvoShellFoundation', () => {
+     assertEquals(null, resolveEvoShellSurface('?surface=workspace'));
+   });
+ 
+-  test('MountsTokenizedBaseSurface', () => {
++  test('MountsTokenizedBaseSurface', async () => {
+     const root = document.createElement('div');
+     document.body.append(root);
+-    assertTrue(mountEvoShellSurface(root, 'sidebar'));
++    const mounted = await mountEvoShellSurface(root, 'sidebar');
++    assertTrue(mounted);
+     assertEquals('sidebar', root.dataset['surface']);
+     assertEquals('agent', document.documentElement.dataset['themeMode']);
+     assertTrue(!!root.querySelector('main.evo-shell-surface'));
+   });
+ 
+-  test('InvalidSurfaceStaysInert', () => {
++  test('InvalidSurfaceStaysInert', async () => {
+     const root = document.createElement('div');
+     document.body.append(root);
+-    assertFalse(mountEvoShellSurface(root, null));
++    assertFalse(await mountEvoShellSurface(root, null));
+     assertEquals(0, root.children.length);
+     assertEquals('invalid', root.dataset['surface']);
+   });
+diff --git a/tools/gritsettings/resource_ids.spec b/tools/gritsettings/resource_ids.spec
+index 7a1b6d2abc73ff4a2e780925280ccc49135370ce..e55d352c4376211f2a29b093086b34f16617c463 100644
+--- a/tools/gritsettings/resource_ids.spec
++++ b/tools/gritsettings/resource_ids.spec
+@@ -494,7 +494,7 @@
+     "includes": [3910],
+   },
+   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/evo_shell/resources.grd": {
+-    "META": {"sizes": {"includes": [20]}},
++    "META": {"sizes": {"includes": [30]}},
+     "includes": [3915],
+   },
+   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/extensions/resources.grd": {

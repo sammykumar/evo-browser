@@ -1,0 +1,979 @@
+From da09c02c2ed116d34a280c8d3fd4a075138028de Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sun, 19 Jul 2026 15:58:47 -0500
+Subject: [PATCH 14/24] evo: add hybrid browser shell host
+
+---
+ chrome/browser/ui/BUILD.gn                    |   2 +
+ chrome/browser/ui/views/frame/browser_view.cc |  83 ++++--
+ chrome/browser/ui/views/frame/browser_view.h  |  14 +
+ .../ui/views/frame/evo_shell_host_view.cc     | 266 ++++++++++++++++++
+ .../ui/views/frame/evo_shell_host_view.h      | 116 ++++++++
+ .../frame/evo_shell_host_view_unittest.cc     | 114 ++++++++
+ .../views/frame/layout/browser_view_layout.h  |   5 +
+ .../layout/browser_view_tabbed_layout_impl.cc |  88 ++++--
+ chrome/test/BUILD.gn                          |   1 +
+ 9 files changed, 644 insertions(+), 45 deletions(-)
+ create mode 100644 chrome/browser/ui/views/frame/evo_shell_host_view.cc
+ create mode 100644 chrome/browser/ui/views/frame/evo_shell_host_view.h
+ create mode 100644 chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
+
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index b669d4f3ee5f390b5b30ea4343b0cf082b72ac02..35e51dcc79d41136f53f1989000085cd1bf2c4e9 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3818,6 +3818,8 @@ static_library("ui") {
+       "views/frame/browser_root_view.cc",
+       "views/frame/browser_view.cc",
+       "views/frame/browser_view.h",
++      "views/frame/evo_shell_host_view.cc",
++      "views/frame/evo_shell_host_view.h",
+       "views/frame/browser_widget.cc",
+       "views/frame/browser_widget.h",
+       "views/frame/browser_window_factory.cc",
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index e4cbf73e32d3c78e42b734e24e785fccae281a70..0ace1d14e85306709033ccb209c4bf2f15cba6ac 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -34,14 +34,14 @@
+ #include "base/notreached.h"
+ #include "base/scoped_observation.h"
+ #include "base/strings/escape.h"
+-#include "base/strings/string_number_conversions.h"
+ #include "base/strings/strcat.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/stringprintf.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/task/sequenced_task_runner.h"
+-#include "base/timer/timer.h"
+ #include "base/task/single_thread_task_runner.h"
++#include "base/timer/timer.h"
+ #include "base/trace_event/trace_event.h"
+ #include "build/build_config.h"
+ #include "chrome/app/chrome_command_ids.h"
+@@ -97,6 +97,7 @@
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/context_highlight/context_highlight_window_feature.h"
+ #include "chrome/browser/ui/dialogs/browser_dialogs.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_features.h"
+ #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
+ #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
+ #include "chrome/browser/ui/find_bar/find_bar.h"
+@@ -161,6 +162,7 @@
+ #include "chrome/browser/ui/views/frame/contents_layout_manager.h"
+ #include "chrome/browser/ui/views/frame/contents_separator.h"
+ #include "chrome/browser/ui/views/frame/custom_floating_corner.h"
++#include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
+ #include "chrome/browser/ui/views/frame/horizontal_tab_strip_region_view.h"
+ #include "chrome/browser/ui/views/frame/layout/browser_view_layout.h"
+ #include "chrome/browser/ui/views/frame/layout/browser_view_layout_delegate_impl.h"
+@@ -558,9 +560,8 @@ class CommandBarView : public views::View,
+         focused_now != textfield_) {
+       ToggleSidekickMode();
+       base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+-          FROM_HERE,
+-          base::BindOnce(&CommandBarView::RestoreTextfieldFocus,
+-                         weak_ptr_factory_.GetWeakPtr()));
++          FROM_HERE, base::BindOnce(&CommandBarView::RestoreTextfieldFocus,
++                                    weak_ptr_factory_.GetWeakPtr()));
+     }
+   }
+ 
+@@ -667,10 +668,10 @@ class ClaudePanelView : public views::View,
+     std::string serialized;
+     base::JSONWriter::Write(*pending_prompt_, &serialized);
+     web_view_->GetWebContents()->GetPrimaryMainFrame()->ExecuteJavaScript(
+-        base::UTF8ToUTF16(base::StrCat(
+-            {"Boolean(window.receiveEvoSidekickPrompt && "
+-             "(window.receiveEvoSidekickPrompt(",
+-             serialized, "), true));"})),
++        base::UTF8ToUTF16(
++            base::StrCat({"Boolean(window.receiveEvoSidekickPrompt && "
++                          "(window.receiveEvoSidekickPrompt(",
++                          serialized, "), true));"})),
+         base::BindOnce(&ClaudePanelView::OnPromptDeliveryResult,
+                        weak_ptr_factory_.GetWeakPtr()));
+   }
+@@ -1192,6 +1193,16 @@ BrowserView::BrowserView(Browser* browser)
+       views::kElementIdentifierKey,
+       BrowserViewLayoutViews::kMainBackgroundRegionElementId);
+ 
++  if (GetIsNormalType() &&
++      base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell)) {
++    evo_shell_host_ = AddChildView(std::make_unique<evo::EvoShellHostView>(
++        browser_->profile(),
++        base::BindRepeating(&BrowserView::OnEvoShellFallback,
++                            base::Unretained(this)),
++        base::BindRepeating(&BrowserView::OnEvoShellReady,
++                            base::Unretained(this))));
++  }
++
+   top_container_ = AddChildView(std::make_unique<TopContainerView>(this));
+   top_container_insertion_index_ = GetIndexOf(top_container_.get());
+ 
+@@ -1425,6 +1436,7 @@ BrowserView::~BrowserView() {
+   // before `RemoveAllChildViews()` is called to avoid dangling.
+   browser_widget_ = nullptr;
+   main_background_region_ = nullptr;
++  evo_shell_host_ = nullptr;
+   top_container_ = nullptr;
+   web_app_frame_toolbar_ = nullptr;
+   web_app_window_title_ = nullptr;
+@@ -1578,6 +1590,11 @@ std::vector<ContentsContainerView*> BrowserView::GetContentsContainerViews() {
+   return multi_contents_view_->contents_container_views();
+ }
+ 
++gfx::Rect BrowserView::evo_traffic_light_reserved_bounds_for_testing() const {
++  return evo_shell_host_ ? evo_shell_host_->traffic_light_reserved_bounds()
++                         : gfx::Rect();
++}
++
+ TabStripRegionView* BrowserView::tab_strip_view() const {
+   auto* controller = tabs::VerticalTabStripStateController::From(browser_);
+   if (vertical_tab_strip_region_view_ && controller &&
+@@ -3048,8 +3065,6 @@ void BrowserView::OnFocusBookmarksToolbar() {
+   }
+ }
+ 
+-
+-
+ void BrowserView::FocusAppMenu() {
+   // Chrome doesn't have a traditional menu bar, but it has a menu button in the
+   // main toolbar that plays the same role.  If the user presses a key that
+@@ -3066,8 +3081,6 @@ void BrowserView::FocusAppMenu() {
+   }
+ }
+ 
+-
+-
+ void BrowserView::TryNotifyWindowBoundsChanged(const gfx::Rect& widget_bounds) {
+   if (interactive_resize_in_progress_ || last_widget_bounds_ == widget_bounds) {
+     return;
+@@ -3371,7 +3384,6 @@ ShowTranslateBubbleResult BrowserView::ShowTranslateBubble(
+   return ShowTranslateBubbleResult::kSuccess;
+ }
+ 
+-
+ DownloadBubbleUIController* BrowserView::GetDownloadBubbleUIController() {
+ #if !BUILDFLAG(IS_CHROMEOS)
+   if (auto* download_controller =
+@@ -4725,8 +4737,8 @@ void BrowserView::GetAccessiblePanes(std::vector<views::View*>* panes) {
+         toolbar_->location_bar_view()
+             ->permission_dashboard_view()
+             ->GetVisible()) {
+-      panes->push_back(toolbar_->location_bar_view()
+-                           ->permission_dashboard_view());
++      panes->push_back(
++          toolbar_->location_bar_view()->permission_dashboard_view());
+     }
+   } else if (toolbar_ && toolbar_->location_bar() &&
+              toolbar_->location_bar()->GetChipController() &&
+@@ -5282,6 +5294,7 @@ void BrowserView::AddedToWidget() {
+   layout_views.contents_container = contents_container_;
+   layout_views.multi_contents_view = multi_contents_view_;
+   layout_views.side_panel = side_panel_;
++  layout_views.evo_shell_host = evo_shell_host_;
+   layout_views.evo_right_rail = evo_right_rail_;
+   layout_views.evo_claude_panel = evo_claude_panel_;
+   layout_views.top_container_separator = top_container_separator_;
+@@ -5571,6 +5584,44 @@ void BrowserView::OpenEvoAI() {
+   chrome::AddTabAt(browser_.get(), GURL(evo_ai_url), -1, true);
+ }
+ 
++void BrowserView::OnEvoShellReady() {
++  if (!evo_shell_host_ || evo_shell_host_->fallback_active()) {
++    return;
++  }
++  evo_shell_active_ = true;
++  if (vertical_tab_strip_region_view_) {
++    vertical_tab_strip_region_view_->SetVisible(false);
++  }
++  if (vertical_tab_strip_top_corner_) {
++    vertical_tab_strip_top_corner_->SetVisible(false);
++  }
++  if (vertical_tab_strip_bottom_corner_) {
++    vertical_tab_strip_bottom_corner_->SetVisible(false);
++  }
++  if (evo_right_rail_) {
++    evo_right_rail_->SetVisible(false);
++  }
++  InvalidateLayout();
++}
++
++void BrowserView::OnEvoShellFallback(evo::EvoShellFallbackReason reason) {
++  evo_shell_active_ = false;
++  if (evo_shell_host_) {
++    evo_shell_host_->SetVisible(false);
++  }
++  if (auto* controller =
++          tabs::VerticalTabStripStateController::From(browser_.get())) {
++    const bool show_vertical_tabs = controller->ShouldDisplayVerticalTabs();
++    if (vertical_tab_strip_region_view_) {
++      vertical_tab_strip_region_view_->SetVisible(show_vertical_tabs);
++    }
++  }
++  if (evo_right_rail_) {
++    evo_right_rail_->SetVisible(true);
++  }
++  InvalidateLayout();
++}
++
+ ///////////////////////////////////////////////////////////////////////////////
+ // BrowserView, infobars::InfoBarContainer::Delegate overrides:
+ 
+diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
+index b399e5cfdb24815dd0492c72dfe5a08c1402ebd2..fcc53a4949158193b636681b17b163229fcd9bc4 100644
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -101,6 +101,8 @@ class WebAppFrameToolbarView;
+ namespace evo {
+ class ClaudePanelView;
+ class CommandBarView;
++class EvoShellHostView;
++enum class EvoShellFallbackReason;
+ class RightRailView;
+ }  // namespace evo
+ 
+@@ -286,6 +288,14 @@ class BrowserView : public BrowserWindow,
+     return vertical_tab_strip_region_view_.get();
+   }
+ 
++  evo::EvoShellHostView* evo_shell_host_for_testing() const {
++    return evo_shell_host_;
++  }
++  bool evo_native_shell_visible_for_testing() const {
++    return !evo_shell_active_;
++  }
++  gfx::Rect evo_traffic_light_reserved_bounds_for_testing() const;
++
+   ProjectsPanelView* projects_panel_container_for_testing() const {
+     return projects_panel_container_;
+   }
+@@ -910,6 +920,8 @@ class BrowserView : public BrowserWindow,
+   void SubmitEvoCommand(const std::u16string& command, bool sidekick_mode);
+   void ToggleEvoClaudePanel();
+   void OpenEvoAI();
++  void OnEvoShellReady();
++  void OnEvoShellFallback(evo::EvoShellFallbackReason reason);
+ 
+   // Callback for the loading animation(s) associated with this view.
+   void LoadingAnimationTimerCallback();
+@@ -1277,9 +1289,11 @@ class BrowserView : public BrowserWindow,
+ 
+   // Evo's browser-shell surfaces. These are intentionally owned by the
+   // BrowserView so they remain stable as WebContents and Spaces change.
++  raw_ptr<evo::EvoShellHostView> evo_shell_host_ = nullptr;
+   raw_ptr<evo::RightRailView> evo_right_rail_ = nullptr;
+   raw_ptr<evo::ClaudePanelView> evo_claude_panel_ = nullptr;
+   raw_ptr<evo::CommandBarView> evo_command_bar_ = nullptr;
++  bool evo_shell_active_ = false;
+ 
+   // The handler responsible for showing autofill bubbles.
+   std::unique_ptr<autofill::AutofillBubbleHandler> autofill_bubble_handler_;
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view.cc b/chrome/browser/ui/views/frame/evo_shell_host_view.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..38e97dd939678d72310277656582f6d76405a705
+--- /dev/null
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view.cc
+@@ -0,0 +1,266 @@
++// Copyright 2026 SK Productions LLC
++
++#include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
++
++#include <algorithm>
++#include <array>
++
++#include "base/functional/bind.h"
++#include "base/strings/strcat.h"
++#include "cc/paint/paint_flags.h"
++#include "cc/paint/paint_shader.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/webui_url_constants.h"
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "third_party/skia/include/core/SkColor.h"
++#include "third_party/skia/include/core/SkTileMode.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/compositor/layer.h"
++#include "ui/gfx/canvas.h"
++#include "ui/gfx/geometry/skia_conversions.h"
++#include "ui/views/controls/webview/webview.h"
++#include "url/gurl.h"
++
++namespace evo {
++namespace {
++
++constexpr int kTrafficLightInset = 18;
++constexpr int kTrafficLightWidth = 60;
++constexpr int kTrafficLightHeight = 14;
++
++std::array<SkColor4f, 3> ThemeColors(EvoNativeTheme theme) {
++  switch (theme) {
++    case EvoNativeTheme::kPersonal:
++      return {SkColor4f::FromColor(SkColorSetRGB(0x7c, 0x8c, 0xff)),
++              SkColor4f::FromColor(SkColorSetRGB(0x9b, 0x7b, 0xf3)),
++              SkColor4f::FromColor(SkColorSetRGB(0x0d, 0x0f, 0x13))};
++    case EvoNativeTheme::kWork:
++      return {SkColor4f::FromColor(SkColorSetRGB(0x5f, 0xd3, 0xa3)),
++              SkColor4f::FromColor(SkColorSetRGB(0x4f, 0xb8, 0xd8)),
++              SkColor4f::FromColor(SkColorSetRGB(0x0d, 0x0f, 0x13))};
++    case EvoNativeTheme::kMedia:
++      return {SkColor4f::FromColor(SkColorSetRGB(0xf2, 0x86, 0xa6)),
++              SkColor4f::FromColor(SkColorSetRGB(0xb0, 0x6f, 0xf0)),
++              SkColor4f::FromColor(SkColorSetRGB(0x0d, 0x0f, 0x13))};
++    case EvoNativeTheme::kFocus:
++      return {SkColor4f::FromColor(SkColorSetRGB(0x6e, 0xa8, 0xf5)),
++              SkColor4f::FromColor(SkColorSetRGB(0x57, 0xdc, 0xd6)),
++              SkColor4f::FromColor(SkColorSetRGB(0x0d, 0x0f, 0x13))};
++    case EvoNativeTheme::kAgent:
++      return {SkColor4f::FromColor(SkColorSetRGB(0x57, 0xdc, 0xd6)),
++              SkColor4f::FromColor(SkColorSetRGB(0x8f, 0x7b, 0xf3)),
++              SkColor4f::FromColor(SkColorSetRGB(0x0d, 0x0f, 0x13))};
++  }
++}
++
++}  // namespace
++
++class EvoShellHostView::SurfaceObserver : public content::WebContentsObserver {
++ public:
++  SurfaceObserver(EvoShellHostView* host,
++                  EvoShellSurface surface,
++                  content::WebContents* web_contents)
++      : content::WebContentsObserver(web_contents),
++        host_(host),
++        surface_(surface) {}
++
++  void DidFinishNavigation(
++      content::NavigationHandle* navigation_handle) override {
++    if (navigation_handle->IsInPrimaryMainFrame() &&
++        navigation_handle->HasCommitted() &&
++        !navigation_handle->IsErrorPage()) {
++      host_->MarkSurfaceReady(surface_);
++    }
++  }
++
++  void WebContentsDestroyed() override {
++    host_->ActivateFallback(surface_ == EvoShellSurface::kSidebar
++                                ? EvoShellFallbackReason::kSidebarDestroyed
++                                : EvoShellFallbackReason::kRailDestroyed);
++  }
++
++ private:
++  const raw_ptr<EvoShellHostView> host_;
++  const EvoShellSurface surface_;
++};
++
++EvoShellHostView::EvoShellHostView(Profile* profile,
++                                   FallbackCallback fallback_callback,
++                                   base::RepeatingClosure ready_callback,
++                                   base::TimeDelta readiness_timeout)
++    : fallback_callback_(std::move(fallback_callback)),
++      ready_callback_(std::move(ready_callback)) {
++  SetPaintToLayer();
++  layer()->SetFillsBoundsOpaquely(true);
++
++  if (!profile) {
++    return;
++  }
++
++  sidebar_web_view_ = AddChildView(std::make_unique<views::WebView>(profile));
++  right_rail_web_view_ =
++      AddChildView(std::make_unique<views::WebView>(profile));
++  sidebar_web_view_->SetVisible(false);
++  right_rail_web_view_->SetVisible(false);
++
++  sidebar_web_view_->LoadInitialURL(
++      GURL(base::StrCat({chrome::kChromeUIEvoShellURL, "?surface=sidebar"})));
++  right_rail_web_view_->LoadInitialURL(
++      GURL(base::StrCat({chrome::kChromeUIEvoShellURL, "?surface=rail"})));
++
++  sidebar_observer_ = std::make_unique<SurfaceObserver>(
++      this, EvoShellSurface::kSidebar, sidebar_web_view_->GetWebContents());
++  right_rail_observer_ =
++      std::make_unique<SurfaceObserver>(this, EvoShellSurface::kRightRail,
++                                        right_rail_web_view_->GetWebContents());
++
++  readiness_timer_.Start(FROM_HERE, readiness_timeout,
++                         base::BindOnce(&EvoShellHostView::OnReadinessTimeout,
++                                        base::Unretained(this)));
++}
++
++EvoShellHostView::~EvoShellHostView() = default;
++
++// static
++EvoShellLayout EvoShellHostView::CalculateLayout(
++    const gfx::Rect& available_bounds,
++    bool sidebar_collapsed,
++    bool right_rail_visible) {
++  gfx::Rect inner = available_bounds;
++  inner.Inset(kWindowInset);
++
++  EvoShellLayout layout;
++  int content_left = inner.x();
++  if (!sidebar_collapsed) {
++    const int sidebar_width = std::min(kSidebarWidth, inner.width());
++    layout.sidebar_bounds =
++        gfx::Rect(inner.x(), inner.y(), sidebar_width, inner.height());
++    content_left = layout.sidebar_bounds.right() + kColumnGap;
++  }
++
++  int content_right = inner.right();
++  if (right_rail_visible) {
++    const int rail_width = std::min(kRightRailWidth, inner.width());
++    layout.right_rail_bounds = gfx::Rect(inner.right() - rail_width, inner.y(),
++                                         rail_width, inner.height());
++    content_right = layout.right_rail_bounds.x() - kColumnGap;
++  }
++
++  layout.content_bounds =
++      gfx::Rect(content_left, inner.y(),
++                std::max(0, content_right - content_left), inner.height());
++
++  const gfx::Rect& traffic_region =
++      sidebar_collapsed ? layout.content_bounds : layout.sidebar_bounds;
++  layout.traffic_light_reserved_bounds =
++      gfx::Rect(traffic_region.x() + kTrafficLightInset,
++                traffic_region.y() + kTrafficLightInset, kTrafficLightWidth,
++                kTrafficLightHeight);
++  return layout;
++}
++
++void EvoShellHostView::SetSidebarCollapsed(bool collapsed) {
++  if (sidebar_collapsed_ == collapsed) {
++    return;
++  }
++  sidebar_collapsed_ = collapsed;
++  InvalidateLayout();
++}
++
++void EvoShellHostView::SetRightRailVisible(bool visible) {
++  if (right_rail_visible_ == visible) {
++    return;
++  }
++  right_rail_visible_ = visible;
++  InvalidateLayout();
++}
++
++void EvoShellHostView::SetTheme(EvoNativeTheme theme) {
++  if (theme_ == theme) {
++    return;
++  }
++  theme_ = theme;
++  SchedulePaint();
++}
++
++void EvoShellHostView::MarkSurfaceReady(EvoShellSurface surface) {
++  if (fallback_active_ || surfaces_ready_) {
++    return;
++  }
++  if (surface == EvoShellSurface::kSidebar) {
++    sidebar_ready_ = true;
++  } else {
++    right_rail_ready_ = true;
++  }
++  if (!sidebar_ready_ || !right_rail_ready_) {
++    return;
++  }
++
++  readiness_timer_.Stop();
++  surfaces_ready_ = true;
++  sidebar_web_view_->SetVisible(!sidebar_collapsed_);
++  right_rail_web_view_->SetVisible(right_rail_visible_);
++  ready_callback_.Run();
++}
++
++void EvoShellHostView::ActivateFallback(EvoShellFallbackReason reason) {
++  if (fallback_active_) {
++    return;
++  }
++  fallback_active_ = true;
++  surfaces_ready_ = false;
++  readiness_timer_.Stop();
++  if (sidebar_web_view_) {
++    sidebar_web_view_->SetVisible(false);
++  }
++  if (right_rail_web_view_) {
++    right_rail_web_view_->SetVisible(false);
++  }
++  fallback_callback_.Run(reason);
++}
++
++void EvoShellHostView::Layout(PassKey) {
++  RecalculateLayout();
++  if (sidebar_web_view_) {
++    sidebar_web_view_->SetBoundsRect(shell_layout_.sidebar_bounds);
++    sidebar_web_view_->SetVisible(surfaces_ready_ && !sidebar_collapsed_);
++  }
++  if (right_rail_web_view_) {
++    right_rail_web_view_->SetBoundsRect(shell_layout_.right_rail_bounds);
++    right_rail_web_view_->SetVisible(surfaces_ready_ && right_rail_visible_);
++  }
++}
++
++void EvoShellHostView::OnPaintBackground(gfx::Canvas* canvas) {
++  const auto colors = ThemeColors(theme_);
++  const SkPoint points[] = {
++      gfx::PointToSkPoint(GetLocalBounds().origin()),
++      gfx::PointToSkPoint(GetLocalBounds().bottom_right())};
++  cc::PaintFlags wallpaper_flags;
++  wallpaper_flags.setAntiAlias(true);
++  wallpaper_flags.setShader(cc::PaintShader::MakeLinearGradient(
++      points, colors.data(), nullptr, colors.size(), SkTileMode::kClamp));
++  canvas->DrawRect(GetLocalBounds(), wallpaper_flags);
++
++  cc::PaintFlags content_flags;
++  content_flags.setAntiAlias(true);
++  content_flags.setColor(SkColorSetRGB(0x0d, 0x0f, 0x13));
++  canvas->DrawRoundRect(gfx::RectF(shell_layout_.content_bounds),
++                        shell::tokens::kSurfaceRadius, content_flags);
++}
++
++void EvoShellHostView::OnReadinessTimeout() {
++  ActivateFallback(EvoShellFallbackReason::kReadinessTimeout);
++}
++
++void EvoShellHostView::RecalculateLayout() {
++  shell_layout_ = CalculateLayout(GetLocalBounds(), sidebar_collapsed_,
++                                  right_rail_visible_);
++}
++
++BEGIN_METADATA(EvoShellHostView)
++END_METADATA
++
++}  // namespace evo
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view.h b/chrome/browser/ui/views/frame/evo_shell_host_view.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..b0c8129f6fd36a645f7aea340638465c93e451be
+--- /dev/null
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view.h
+@@ -0,0 +1,116 @@
++// Copyright 2026 SK Productions LLC
++
++#ifndef CHROME_BROWSER_UI_VIEWS_FRAME_EVO_SHELL_HOST_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_FRAME_EVO_SHELL_HOST_VIEW_H_
++
++#include <memory>
++
++#include "base/functional/callback.h"
++#include "base/memory/raw_ptr.h"
++#include "base/time/time.h"
++#include "base/timer/timer.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_tokens.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/gfx/geometry/rect.h"
++#include "ui/views/view.h"
++
++class Profile;
++
++namespace views {
++class WebView;
++}
++
++namespace evo {
++
++enum class EvoShellSurface { kSidebar, kRightRail };
++
++enum class EvoShellFallbackReason {
++  kReadinessTimeout,
++  kSidebarDestroyed,
++  kRailDestroyed,
++};
++
++enum class EvoNativeTheme { kAgent, kPersonal, kWork, kMedia, kFocus };
++
++struct EvoShellLayout {
++  bool operator==(const EvoShellLayout&) const = default;
++
++  gfx::Rect sidebar_bounds;
++  gfx::Rect content_bounds;
++  gfx::Rect right_rail_bounds;
++  gfx::Rect traffic_light_reserved_bounds;
++};
++
++// Hosts Evo's trusted sidebar and right-rail WebUIs below Chromium's native
++// content. BrowserView uses the same deterministic layout result to position
++// native toolbar/content, preventing independent offsets from accumulating.
++class EvoShellHostView : public views::View {
++  METADATA_HEADER(EvoShellHostView, views::View)
++
++ public:
++  using FallbackCallback =
++      base::RepeatingCallback<void(EvoShellFallbackReason)>;
++
++  static constexpr int kWindowInset = shell::tokens::kOuterInset;
++  static constexpr int kColumnGap = shell::tokens::kRegionGap;
++  static constexpr int kSidebarWidth = shell::tokens::kSidebarWidth;
++  static constexpr int kRightRailWidth = shell::tokens::kRightRailWidth;
++
++  EvoShellHostView(Profile* profile,
++                   FallbackCallback fallback_callback,
++                   base::RepeatingClosure ready_callback,
++                   base::TimeDelta readiness_timeout = base::Seconds(8));
++  EvoShellHostView(const EvoShellHostView&) = delete;
++  EvoShellHostView& operator=(const EvoShellHostView&) = delete;
++  ~EvoShellHostView() override;
++
++  static EvoShellLayout CalculateLayout(const gfx::Rect& available_bounds,
++                                        bool sidebar_collapsed,
++                                        bool right_rail_visible);
++
++  void SetSidebarCollapsed(bool collapsed);
++  void SetRightRailVisible(bool visible);
++  void SetTheme(EvoNativeTheme theme);
++  void MarkSurfaceReady(EvoShellSurface surface);
++  void ActivateFallback(EvoShellFallbackReason reason);
++
++  bool surfaces_ready() const { return surfaces_ready_; }
++  bool fallback_active() const { return fallback_active_; }
++  bool sidebar_collapsed() const { return sidebar_collapsed_; }
++  bool right_rail_visible() const { return right_rail_visible_; }
++  const EvoShellLayout& shell_layout() const { return shell_layout_; }
++  gfx::Rect content_bounds() const { return shell_layout_.content_bounds; }
++  gfx::Rect traffic_light_reserved_bounds() const {
++    return shell_layout_.traffic_light_reserved_bounds;
++  }
++
++ protected:
++  void Layout(PassKey) override;
++  void OnPaintBackground(gfx::Canvas* canvas) override;
++
++ private:
++  class SurfaceObserver;
++
++  void OnReadinessTimeout();
++  void RecalculateLayout();
++
++  raw_ptr<views::WebView> sidebar_web_view_ = nullptr;
++  raw_ptr<views::WebView> right_rail_web_view_ = nullptr;
++  std::unique_ptr<SurfaceObserver> sidebar_observer_;
++  std::unique_ptr<SurfaceObserver> right_rail_observer_;
++  FallbackCallback fallback_callback_;
++  base::RepeatingClosure ready_callback_;
++  base::OneShotTimer readiness_timer_;
++  EvoShellLayout shell_layout_;
++  EvoNativeTheme theme_ = EvoNativeTheme::kAgent;
++  bool sidebar_ready_ = false;
++  bool right_rail_ready_ = false;
++  bool surfaces_ready_ = false;
++  bool fallback_active_ = false;
++  bool sidebar_collapsed_ = false;
++  bool right_rail_visible_ = true;
++};
++
++}  // namespace evo
++
++#endif  // CHROME_BROWSER_UI_VIEWS_FRAME_EVO_SHELL_HOST_VIEW_H_
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc b/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..447bad1f733c9aa94f1a94dadebacb2d4f92d6c7
+--- /dev/null
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
+@@ -0,0 +1,114 @@
++// Copyright 2026 SK Productions LLC
++
++#include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
++
++#include <array>
++
++#include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
++#include "testing/gtest/include/gtest/gtest.h"
++
++namespace evo {
++namespace {
++
++TEST(EvoShellHostViewTest, CalculatesStableThreeColumnLayouts) {
++  struct TestCase {
++    bool sidebar_collapsed;
++    bool right_rail_visible;
++    int expected_content_x;
++    int expected_content_width;
++  };
++
++  constexpr std::array<TestCase, 4> kTestCases = {{
++      {false, true, 312, 780},
++      {false, false, 312, 870},
++      {true, true, 18, 1074},
++      {true, false, 18, 1164},
++  }};
++
++  for (const auto& test_case : kTestCases) {
++    SCOPED_TRACE(testing::Message()
++                 << "sidebar_collapsed=" << test_case.sidebar_collapsed
++                 << " right_rail_visible=" << test_case.right_rail_visible);
++    const gfx::Rect available_bounds(0, 0, 1200, 800);
++    const EvoShellLayout expected = EvoShellHostView::CalculateLayout(
++        available_bounds, test_case.sidebar_collapsed,
++        test_case.right_rail_visible);
++
++    EXPECT_EQ(expected.content_bounds.x(), test_case.expected_content_x);
++    EXPECT_EQ(expected.content_bounds.width(),
++              test_case.expected_content_width);
++    EXPECT_EQ(expected.content_bounds.y(), EvoShellHostView::kWindowInset);
++    EXPECT_EQ(expected.content_bounds.bottom(),
++              available_bounds.bottom() - EvoShellHostView::kWindowInset);
++
++    if (test_case.sidebar_collapsed) {
++      EXPECT_TRUE(expected.sidebar_bounds.IsEmpty());
++      EXPECT_TRUE(expected.content_bounds.Contains(
++          expected.traffic_light_reserved_bounds));
++    } else {
++      EXPECT_EQ(expected.sidebar_bounds.width(),
++                EvoShellHostView::kSidebarWidth);
++      EXPECT_TRUE(expected.sidebar_bounds.Contains(
++          expected.traffic_light_reserved_bounds));
++    }
++
++    if (test_case.right_rail_visible) {
++      EXPECT_EQ(expected.right_rail_bounds.width(),
++                EvoShellHostView::kRightRailWidth);
++      EXPECT_EQ(expected.content_bounds.right() + EvoShellHostView::kColumnGap,
++                expected.right_rail_bounds.x());
++    } else {
++      EXPECT_TRUE(expected.right_rail_bounds.IsEmpty());
++    }
++
++    for (int i = 0; i < 10; ++i) {
++      EXPECT_EQ(EvoShellHostView::CalculateLayout(available_bounds,
++                                                  test_case.sidebar_collapsed,
++                                                  test_case.right_rail_visible),
++                expected);
++    }
++  }
++}
++
++TEST(EvoShellHostViewTest, CollapsingRegionsReturnsTheirWidthAndGap) {
++  const gfx::Rect available_bounds(0, 0, 1200, 800);
++  const EvoShellLayout all_regions =
++      EvoShellHostView::CalculateLayout(available_bounds, false, true);
++  const EvoShellLayout sidebar_collapsed =
++      EvoShellHostView::CalculateLayout(available_bounds, true, true);
++  const EvoShellLayout rail_hidden =
++      EvoShellHostView::CalculateLayout(available_bounds, false, false);
++
++  EXPECT_EQ(sidebar_collapsed.content_bounds.width() -
++                all_regions.content_bounds.width(),
++            EvoShellHostView::kSidebarWidth + EvoShellHostView::kColumnGap);
++  EXPECT_EQ(
++      rail_hidden.content_bounds.width() - all_regions.content_bounds.width(),
++      EvoShellHostView::kRightRailWidth + EvoShellHostView::kColumnGap);
++}
++
++TEST(EvoShellHostViewTest, ContentWidthNeverBecomesNegative) {
++  const EvoShellLayout layout =
++      EvoShellHostView::CalculateLayout(gfx::Rect(0, 0, 100, 80), false, true);
++  EXPECT_GE(layout.content_bounds.width(), 0);
++  EXPECT_GE(layout.content_bounds.height(), 0);
++}
++
++TEST(EvoShellHostViewTest, FallbackCallbackRunsExactlyOnce) {
++  int fallback_count = 0;
++  EvoShellHostView host(
++      /*profile=*/nullptr,
++      base::BindRepeating([](int* count, EvoShellFallbackReason) { ++*count; },
++                          &fallback_count),
++      base::DoNothing(), base::TimeDelta());
++
++  host.ActivateFallback(EvoShellFallbackReason::kReadinessTimeout);
++  host.ActivateFallback(EvoShellFallbackReason::kSidebarDestroyed);
++  host.ActivateFallback(EvoShellFallbackReason::kRailDestroyed);
++
++  EXPECT_EQ(fallback_count, 1);
++}
++
++}  // namespace
++}  // namespace evo
+diff --git a/chrome/browser/ui/views/frame/layout/browser_view_layout.h b/chrome/browser/ui/views/frame/layout/browser_view_layout.h
+index 61bc341c1ed842e9a0584719568f781a387b93e5..475c6f06e191098fc74b0617a5bb2cbbca4c26b5 100644
+--- a/chrome/browser/ui/views/frame/layout/browser_view_layout.h
++++ b/chrome/browser/ui/views/frame/layout/browser_view_layout.h
+@@ -27,6 +27,10 @@ class HorizontalTabStripRegionView;
+ class VerticalTabStripRegionView;
+ class WebAppFrameToolbarView;
+ 
++namespace evo {
++class EvoShellHostView;
++}
++
+ namespace views {
+ class View;
+ class Label;
+@@ -75,6 +79,7 @@ struct BrowserViewLayoutViews {
+   raw_ptr<views::View> contents_container = nullptr;
+   raw_ptr<MultiContentsView> multi_contents_view = nullptr;
+   raw_ptr<SidePanel> side_panel = nullptr;
++  raw_ptr<evo::EvoShellHostView> evo_shell_host = nullptr;
+   raw_ptr<views::View> evo_right_rail = nullptr;
+   raw_ptr<views::View> evo_claude_panel = nullptr;
+   raw_ptr<views::View> side_panel_animation_content = nullptr;
+diff --git a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
+index 88a788d9db434a4d92f6721fe94f30274b90567c..849ae78a7b21eb92e019abe26981047a4c4b312f 100644
+--- a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
++++ b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
+@@ -22,6 +22,7 @@
+ #include "chrome/browser/ui/views/bookmarks/bookmark_bar_view.h"
+ #include "chrome/browser/ui/views/frame/custom_corners_background.h"
+ #include "chrome/browser/ui/views/frame/custom_floating_corner.h"
++#include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
+ #include "chrome/browser/ui/views/frame/horizontal_tab_strip_region_view.h"
+ #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
+ #include "chrome/browser/ui/views/frame/layout/browser_view_layout_delegate.h"
+@@ -552,7 +553,7 @@ gfx::Size BrowserViewTabbedLayoutImpl::GetMinimumMainAreaSize(
+ 
+   int width = std::max({toolbar_size.width(), bookmark_bar_size.width(),
+                         infobar_container_size.width(),
+-                            kContentsContainerMinimumWidth});
++                        kContentsContainerMinimumWidth});
+   const int height = toolbar_size.height() + bookmark_bar_size.height() +
+                      infobar_container_size.height() + contents_size.height();
+ 
+@@ -681,6 +682,22 @@ BrowserViewTabbedLayoutImpl::CalculateProposedLayout(
+   }
+ 
+   BrowserLayoutParams params = layout_data_->revised_params;
++  const bool evo_shell_active =
++      IsParentedTo(views().evo_shell_host, views().browser_view) &&
++      views().evo_shell_host->surfaces_ready() &&
++      !views().evo_shell_host->fallback_active();
++  if (IsParentedTo(views().evo_shell_host, views().browser_view)) {
++    layout.AddChild(views().evo_shell_host, browser_params.visual_client_area,
++                    !views().evo_shell_host->fallback_active());
++    if (evo_shell_active) {
++      params.visual_client_area =
++          evo::EvoShellHostView::CalculateLayout(
++              browser_params.visual_client_area,
++              views().evo_shell_host->sidebar_collapsed(),
++              views().evo_shell_host->right_rail_visible())
++              .content_bounds;
++    }
++  }
+   bool needs_exclusion = true;
+   const bool adjust_for_cracking = AvoidCrackingForFractionalDisplay();
+   const HorizontalLayout& horizontal_layout = layout_data_->horizontal_layout;
+@@ -714,7 +731,8 @@ BrowserViewTabbedLayoutImpl::CalculateProposedLayout(
+   gfx::Rect vertical_tab_strip_bounds;
+   if (IsParentedTo(views().vertical_tab_strip_region_view,
+                    views().browser_view)) {
+-    if (layout_data_->tab_strip_type == TabStripType::kVertical) {
++    if (!evo_shell_active &&
++        layout_data_->tab_strip_type == TabStripType::kVertical) {
+       if (vertical_tab_strip_animation.top_offset > 0) {
+         collapsed_vertical_tab_strip_adjustment =
+             horizontal_layout.vertical_tab_strip_width;
+@@ -783,7 +801,8 @@ BrowserViewTabbedLayoutImpl::CalculateProposedLayout(
+     }
+     layout.AddChild(views().vertical_tab_strip_region_view,
+                     vertical_tab_strip_bounds,
+-                    layout_data_->tab_strip_type == TabStripType::kVertical);
++                    !evo_shell_active && layout_data_->tab_strip_type ==
++                                             TabStripType::kVertical);
+   }
+ 
+   // Position the vertical tabstrip top corner.
+@@ -791,6 +810,7 @@ BrowserViewTabbedLayoutImpl::CalculateProposedLayout(
+                    views().browser_view)) {
+     gfx::Rect corner_bounds;
+     const bool top_corner_visible =
++        !evo_shell_active &&
+         layout_data_->tab_strip_type == TabStripType::kVertical &&
+         vertical_tab_strip_animation.top_corner > 0.0;
+ 
+@@ -814,6 +834,7 @@ BrowserViewTabbedLayoutImpl::CalculateProposedLayout(
+                    views().browser_view)) {
+     gfx::Rect corner_bounds;
+     const bool bottom_corner_visible =
++        !evo_shell_active &&
+         layout_data_->tab_strip_type == TabStripType::kVertical &&
+         vertical_tab_strip_animation.bottom_corner > 0.0;
+     if (bottom_corner_visible) {
+@@ -1050,33 +1071,41 @@ BrowserViewTabbedLayoutImpl::CalculateProposedLayout(
+   // contents from briefly painting at full width and snapping horizontally on
+   // subsequent layout passes.
+   if (IsParentedTo(views().evo_right_rail, views().browser_view)) {
+-    const int rail_width =
+-        std::min(kEvoRightRailWidth, params.visual_client_area.width());
+-    const gfx::Rect rail_bounds(params.visual_client_area.right() - rail_width,
+-                                params.visual_client_area.y(), rail_width,
+-                                params.visual_client_area.height());
+-    layout.AddChild(views().evo_right_rail, rail_bounds, true);
+-    params.InsetHorizontal(rail_width, /*leading=*/false);
+-
+-    int panel_width = 0;
+-    const bool panel_visible =
+-        IsParentedTo(views().evo_claude_panel, views().browser_view) &&
+-        views().evo_claude_panel->GetVisible();
+-    if (IsParentedTo(views().evo_claude_panel, views().browser_view)) {
+-      panel_width = panel_visible
+-                        ? std::min(kEvoClaudePanelWidth,
+-                                   params.visual_client_area.width() / 2)
+-                        : 0;
+-      const gfx::Rect panel_bounds(
+-          params.visual_client_area.right() - panel_width,
+-          params.visual_client_area.y(), panel_width,
++    if (evo_shell_active) {
++      layout.AddChild(views().evo_right_rail, gfx::Rect(), false);
++      if (IsParentedTo(views().evo_claude_panel, views().browser_view)) {
++        layout.AddChild(views().evo_claude_panel, gfx::Rect(), false);
++      }
++    } else {
++      const int rail_width =
++          std::min(kEvoRightRailWidth, params.visual_client_area.width());
++      const gfx::Rect rail_bounds(
++          params.visual_client_area.right() - rail_width,
++          params.visual_client_area.y(), rail_width,
+           params.visual_client_area.height());
+-      layout.AddChild(views().evo_claude_panel, panel_bounds, panel_visible);
+-      params.InsetHorizontal(panel_width, /*leading=*/false);
+-    }
++      layout.AddChild(views().evo_right_rail, rail_bounds, true);
++      params.InsetHorizontal(rail_width, /*leading=*/false);
++
++      int panel_width = 0;
++      const bool panel_visible =
++          IsParentedTo(views().evo_claude_panel, views().browser_view) &&
++          views().evo_claude_panel->GetVisible();
++      if (IsParentedTo(views().evo_claude_panel, views().browser_view)) {
++        panel_width = panel_visible
++                          ? std::min(kEvoClaudePanelWidth,
++                                     params.visual_client_area.width() / 2)
++                          : 0;
++        const gfx::Rect panel_bounds(
++            params.visual_client_area.right() - panel_width,
++            params.visual_client_area.y(), panel_width,
++            params.visual_client_area.height());
++        layout.AddChild(views().evo_claude_panel, panel_bounds, panel_visible);
++        params.InsetHorizontal(panel_width, /*leading=*/false);
++      }
+ 
+-    unclipped_contents_region.Inset(
+-        gfx::Insets::TLBR(0, 0, 0, rail_width + panel_width));
++      unclipped_contents_region.Inset(
++          gfx::Insets::TLBR(0, 0, 0, rail_width + panel_width));
++    }
+   }
+ 
+   // Top separator is unnecessary when already in the shadow box; this is
+@@ -1186,7 +1215,8 @@ BrowserViewTabbedLayoutImpl::CalculateProposedLayout(
+   }
+ 
+   // Make final visual adjustments required for child views to paint.
+-  if (layout_data_->tab_strip_type == TabStripType::kVertical) {
++  if (!evo_shell_active &&
++      layout_data_->tab_strip_type == TabStripType::kVertical) {
+     // Need to know the toolbar height relative to the tabstrip, so that
+     // vertical tabstrip elements can align with the toolbar.
+     const auto toolbar_bounds =
+diff --git a/chrome/test/BUILD.gn b/chrome/test/BUILD.gn
+index 80e65782a47d8e30361589ee9958cafa19983b76..9fbb986fd7e17b65db56a518d68b02cfd6d561b2 100644
+--- a/chrome/test/BUILD.gn
++++ b/chrome/test/BUILD.gn
+@@ -10507,6 +10507,7 @@ test("unit_tests") {
+       "../browser/ui/views/extensions/extensions_toolbar_unittest.cc",
+       "../browser/ui/views/extensions/extensions_toolbar_unittest.h",
+       "../browser/ui/views/frame/browser_frame_view_unittest.cc",
++      "../browser/ui/views/frame/evo_shell_host_view_unittest.cc",
+       "../browser/ui/views/frame/browser_view_unittest.cc",
+       "../browser/ui/views/frame/layout/browser_view_layout_params_unittest.cc",
+       "../browser/ui/views/frame/multi_contents_drop_target_view_unittest.cc",

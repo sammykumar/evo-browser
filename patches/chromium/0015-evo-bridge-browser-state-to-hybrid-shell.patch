@@ -1,0 +1,959 @@
+From d7d229aa7768eb0155d111b628d9be4c36b0bdee Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sun, 19 Jul 2026 16:14:10 -0500
+Subject: [PATCH 15/24] evo: bridge browser state to hybrid shell
+
+---
+ chrome/browser/prefs/browser_prefs.cc         |   2 +
+ chrome/browser/ui/BUILD.gn                    |   6 +
+ .../ui/evo_shell/evo_shell_coordinator.cc     | 257 ++++++++++++++++++
+ .../ui/evo_shell/evo_shell_coordinator.h      |  66 +++++
+ .../browser/ui/evo_shell/evo_shell_prefs.cc   |  13 +
+ chrome/browser/ui/evo_shell/evo_shell_prefs.h |  18 ++
+ .../browser/ui/evo_shell/evo_shell_types.cc   |  73 +++++
+ chrome/browser/ui/evo_shell/evo_shell_types.h |  60 ++++
+ chrome/browser/ui/views/frame/browser_view.cc |   7 +-
+ chrome/browser/ui/views/frame/browser_view.h  |   7 +
+ .../ui/views/frame/evo_shell_host_view.cc     |  34 ++-
+ .../ui/views/frame/evo_shell_host_view.h      |   8 +
+ .../frame/evo_shell_host_view_unittest.cc     |   2 +-
+ .../ui/webui/evo_shell/evo_shell_ui.cc        | 131 ++++++++-
+ ui/webui/resources/tools/build_webui.gni      |   2 +
+ 15 files changed, 672 insertions(+), 14 deletions(-)
+ create mode 100644 chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+ create mode 100644 chrome/browser/ui/evo_shell/evo_shell_coordinator.h
+ create mode 100644 chrome/browser/ui/evo_shell/evo_shell_prefs.cc
+ create mode 100644 chrome/browser/ui/evo_shell/evo_shell_prefs.h
+ create mode 100644 chrome/browser/ui/evo_shell/evo_shell_types.cc
+ create mode 100644 chrome/browser/ui/evo_shell/evo_shell_types.h
+
+diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
+index e2f470d579aada51bd6d2a81d89e6db7c125756d..1d9ac818074a8b0dfa812790d1af287c78f3da6b 100644
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -28,6 +28,7 @@
+ #include "chrome/browser/component_updater/component_updater_prefs.h"
+ #include "chrome/browser/download/download_prefs.h"
+ #include "chrome/browser/engagement/important_sites_util.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_prefs.h"
+ #include "chrome/browser/enterprise/reporting/prefs.h"
+ #include "chrome/browser/enterprise/util/managed_browser_utils.h"
+ #include "chrome/browser/external_protocol/external_protocol_handler.h"
+@@ -1668,6 +1669,7 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
+   enterprise_isolated_mode::RegisterProfilePrefs(registry);
+   enterprise_promotion::RegisterProfilePrefs(registry);
+   enterprise_reporting::RegisterProfilePrefs(registry);
++  evo::shell::prefs::RegisterProfilePrefs(registry);
+   dom_distiller::DistilledPagePrefs::RegisterProfilePrefs(registry);
+   DownloadPrefs::RegisterProfilePrefs(registry);
+   finds::FindsService::RegisterProfilePrefs(registry);
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index 35e51dcc79d41136f53f1989000085cd1bf2c4e9..81dcc6dcf3cc30c89f5e4d7f1d62ec4bb26e0748 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -1117,6 +1117,12 @@ static_library("ui") {
+       "browser_tabstrip.h",
+       "browser_view_prefs.cc",
+       "browser_view_prefs.h",
++      "evo_shell/evo_shell_coordinator.cc",
++      "evo_shell/evo_shell_coordinator.h",
++      "evo_shell/evo_shell_prefs.cc",
++      "evo_shell/evo_shell_prefs.h",
++      "evo_shell/evo_shell_types.cc",
++      "evo_shell/evo_shell_types.h",
+       "browser_window.h",
+       "browser_window_deleter.cc",
+       "browser_window_deleter.h",
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..0e4c0be4f838904609b4225d9950fa5ee1ceee25
+--- /dev/null
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+@@ -0,0 +1,257 @@
++// Copyright 2026 SK Productions LLC
++
++#include "chrome/browser/ui/evo_shell/evo_shell_coordinator.h"
++
++#include <array>
++#include <optional>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/strings/escape.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser.h"
++#include "chrome/browser/ui/browser_commands.h"
++#include "chrome/browser/ui/browser_tabstrip.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_prefs.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_types.h"
++#include "chrome/browser/ui/tabs/tab_group_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
++#include "chrome/common/webui_url_constants.h"
++#include "components/prefs/pref_service.h"
++#include "components/tab_groups/tab_group_id.h"
++#include "components/tabs/public/tab_group.h"
++#include "content/public/browser/web_contents.h"
++#include "url/gurl.h"
++
++namespace evo::shell {
++namespace {
++
++struct FavoriteDefinition {
++  const char* id;
++  const char* title;
++  const char* url;
++};
++
++constexpr std::array<FavoriteDefinition, 12> kFavorites = {{
++    {"claude", "Claude", "https://claude.ai/"},
++    {"chatgpt", "ChatGPT", "https://chatgpt.com/"},
++    {"github", "GitHub", "https://github.com/"},
++    {"discord", "Discord", "https://discord.com/app"},
++    {"azure", "Azure", "https://portal.azure.com/"},
++    {"reddit", "Reddit", "https://www.reddit.com/"},
++    {"clickup", "ClickUp", "https://app.clickup.com/"},
++    {"drive", "Google Drive", "https://drive.google.com/"},
++    {"gmail", "Gmail", "https://mail.google.com/"},
++    {"calendar", "Google Calendar", "https://calendar.google.com/"},
++    {"figma", "Figma", "https://www.figma.com/"},
++    {"codex", "Codex", "https://chatgpt.com/codex"},
++}};
++
++constexpr std::array<const char*, 5> kThemeModes = {"agent", "personal", "work",
++                                                    "media", "focus"};
++
++std::string FaviconUrl(const GURL& page_url) {
++  if (!page_url.is_valid()) {
++    return "chrome://resources/images/icon_globe.svg";
++  }
++  return "chrome://favicon2/?size=32&scale_factor=2x&page_url=" +
++         base::EscapeQueryParamValue(page_url.spec(), true);
++}
++
++std::string TabId(tabs::TabInterface* tab) {
++  return base::NumberToString(tab->GetHandle().raw_value());
++}
++
++TabSnapshot SnapshotTab(TabStripModel* model, int index) {
++  tabs::TabInterface* tab = model->GetTabAtIndex(index);
++  content::WebContents* contents = model->GetWebContentsAt(index);
++  const GURL& url = contents->GetLastCommittedURL();
++  return {.id = TabId(tab),
++          .title = base::UTF16ToUTF8(
++              contents->GetTitle().empty() ? u"New Tab" : contents->GetTitle()),
++          .url =
++              url.SchemeIsHTTPOrHTTPS() ? std::string(url.host()) : std::string(),
++          .favicon_url = FaviconUrl(url),
++          .active = index == model->active_index(),
++          .loading = contents->IsLoading(),
++          .pinned = tab->IsPinned()};
++}
++
++}  // namespace
++
++EvoShellCoordinator::EvoShellCoordinator(Browser* browser,
++                                         Profile* profile,
++                                         EvoShellHostView* host)
++    : browser_(browser), profile_(profile), host_(host) {
++  browser_->tab_strip_model()->AddObserver(this);
++  host_->SetSidebarCollapsed(
++      profile_->GetPrefs()->GetBoolean(prefs::kSidebarCollapsed));
++}
++
++EvoShellCoordinator::~EvoShellCoordinator() {
++  browser_->tab_strip_model()->RemoveObserver(this);
++}
++
++base::DictValue EvoShellCoordinator::BuildSnapshot() const {
++  TabStripModel* model = browser_->tab_strip_model();
++  ShellSnapshot snapshot;
++  snapshot.sidebar_collapsed = host_->sidebar_collapsed();
++  snapshot.active_rail_target = active_rail_target_;
++
++  const auto groups = model->group_model()->ListTabGroups();
++  const std::optional<tab_groups::TabGroupId> focused =
++      model->GetFocusedGroup();
++  for (size_t index = 0; index < groups.size(); ++index) {
++    TabGroup* group = model->group_model()->GetTabGroup(groups[index]);
++    const std::u16string& title = group->visual_data()->title();
++    snapshot.spaces.push_back(
++        {.id = groups[index].ToString(),
++         .name = base::UTF16ToUTF8(
++             title.empty() ? u"Space " + base::NumberToString16(index + 1)
++                           : title),
++         .mode = kThemeModes[index % kThemeModes.size()]});
++  }
++  if (focused) {
++    snapshot.active_space_id = focused->ToString();
++  } else if (!snapshot.spaces.empty()) {
++    snapshot.active_space_id = snapshot.spaces.front().id;
++  }
++
++  for (const auto& favorite : kFavorites) {
++    snapshot.favorites.push_back(
++        {.id = favorite.id,
++         .title = favorite.title,
++         .favicon_url = FaviconUrl(GURL(favorite.url))});
++  }
++
++  for (int index = 0; index < model->count(); ++index) {
++    tabs::TabInterface* tab = model->GetTabAtIndex(index);
++    if (tab->IsPinned()) {
++      snapshot.pinned_tabs.push_back(SnapshotTab(model, index));
++      continue;
++    }
++    if (!focused || tab->GetGroup() == focused) {
++      snapshot.open_tabs.push_back(SnapshotTab(model, index));
++    }
++  }
++  return snapshot.ToValue();
++}
++
++base::DictValue EvoShellCoordinator::DispatchAction(
++    const base::DictValue& action) {
++  const std::string* type = action.FindString("type");
++  if (!type) {
++    return BuildSnapshot();
++  }
++
++  TabStripModel* model = browser_->tab_strip_model();
++  if (*type == "activateTab") {
++    const std::string* id = action.FindString("tabId");
++    const int index = id ? FindTabIndex(*id) : TabStripModel::kNoTab;
++    if (index != TabStripModel::kNoTab) {
++      model->ActivateTabAt(index);
++    }
++  } else if (*type == "closeTab") {
++    const std::string* id = action.FindString("tabId");
++    const int index = id ? FindTabIndex(*id) : TabStripModel::kNoTab;
++    if (index != TabStripModel::kNoTab && !model->IsTabPinned(index)) {
++      model->CloseWebContentsAt(index, TabCloseTypes::CLOSE_USER_GESTURE);
++    }
++  } else if (*type == "newTab") {
++    chrome::AddTabAt(browser_, GURL(), -1, true);
++  } else if (*type == "openFavorite") {
++    const std::string* id = action.FindString("favoriteId");
++    if (id) {
++      for (const auto& favorite : kFavorites) {
++        if (*id == favorite.id) {
++          chrome::AddTabAt(browser_, GURL(favorite.url), -1, true);
++          break;
++        }
++      }
++    }
++  } else if (*type == "selectSpace") {
++    const std::string* id = action.FindString("spaceId");
++    if (id) {
++      const auto groups = model->group_model()->ListTabGroups();
++      for (size_t index = 0; index < groups.size(); ++index) {
++        if (*id == groups[index].ToString()) {
++          model->SetFocusedGroup(groups[index]);
++          host_->SetTheme(static_cast<EvoNativeTheme>(index % 5));
++          break;
++        }
++      }
++    }
++  } else if (*type == "setSidebarCollapsed") {
++    const std::optional<bool> collapsed = action.FindBool("collapsed");
++    if (collapsed) {
++      host_->SetSidebarCollapsed(*collapsed);
++      profile_->GetPrefs()->SetBoolean(prefs::kSidebarCollapsed, *collapsed);
++      BrowserView::GetBrowserViewForBrowser(browser_)->InvalidateLayout();
++    }
++  } else if (*type == "selectRailTarget") {
++    const std::string* target = action.FindString("target");
++    if (target) {
++      active_rail_target_ = *target;
++    }
++  }
++
++  ScheduleSnapshotChanged();
++  return BuildSnapshot();
++}
++
++base::CallbackListSubscription EvoShellCoordinator::AddSnapshotChangedCallback(
++    base::RepeatingCallback<void(const base::DictValue&)> callback) {
++  return snapshot_callbacks_.Add(std::move(callback));
++}
++
++void EvoShellCoordinator::OnTabStripModelChanged(
++    TabStripModel* tab_strip_model,
++    const TabStripModelChange& change,
++    const TabStripSelectionChange& selection) {
++  ScheduleSnapshotChanged();
++}
++
++void EvoShellCoordinator::OnTabChangedAt(tabs::TabInterface* tab,
++                                         int index,
++                                         TabChangeType change_type) {
++  ScheduleSnapshotChanged();
++}
++
++void EvoShellCoordinator::OnTabGroupFocusChanged(
++    std::optional<tab_groups::TabGroupId> new_focused_group_id,
++    std::optional<tab_groups::TabGroupId> old_focused_group_id) {
++  ScheduleSnapshotChanged();
++}
++
++int EvoShellCoordinator::FindTabIndex(const std::string& id) const {
++  TabStripModel* model = browser_->tab_strip_model();
++  for (int index = 0; index < model->count(); ++index) {
++    if (TabId(model->GetTabAtIndex(index)) == id) {
++      return index;
++    }
++  }
++  return TabStripModel::kNoTab;
++}
++
++void EvoShellCoordinator::ScheduleSnapshotChanged() {
++  if (notification_scheduled_) {
++    return;
++  }
++  notification_scheduled_ = true;
++  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE, base::BindOnce(&EvoShellCoordinator::NotifySnapshotChanged,
++                                weak_ptr_factory_.GetWeakPtr()));
++}
++
++void EvoShellCoordinator::NotifySnapshotChanged() {
++  notification_scheduled_ = false;
++  const base::DictValue snapshot = BuildSnapshot();
++  snapshot_callbacks_.Notify(snapshot);
++}
++
++}  // namespace evo::shell
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.h b/chrome/browser/ui/evo_shell/evo_shell_coordinator.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..4c22ff137f147328b8d628d9bcfab72887640e6a
+--- /dev/null
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.h
+@@ -0,0 +1,66 @@
++// Copyright 2026 SK Productions LLC
++
++#ifndef CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_COORDINATOR_H_
++#define CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_COORDINATOR_H_
++
++#include <string>
++
++#include "base/callback_list.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/values.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
++
++class Browser;
++class Profile;
++class TabStripModel;
++
++namespace evo {
++class EvoShellHostView;
++
++namespace shell {
++
++class EvoShellCoordinator : public TabStripModelObserver {
++ public:
++  EvoShellCoordinator(Browser* browser,
++                      Profile* profile,
++                      EvoShellHostView* host);
++  EvoShellCoordinator(const EvoShellCoordinator&) = delete;
++  EvoShellCoordinator& operator=(const EvoShellCoordinator&) = delete;
++  ~EvoShellCoordinator() override;
++
++  base::DictValue BuildSnapshot() const;
++  base::DictValue DispatchAction(const base::DictValue& action);
++  base::CallbackListSubscription AddSnapshotChangedCallback(
++      base::RepeatingCallback<void(const base::DictValue&)> callback);
++
++  void OnTabStripModelChanged(
++      TabStripModel* tab_strip_model,
++      const TabStripModelChange& change,
++      const TabStripSelectionChange& selection) override;
++  void OnTabChangedAt(tabs::TabInterface* tab,
++                      int index,
++                      TabChangeType change_type) override;
++  void OnTabGroupFocusChanged(
++      std::optional<tab_groups::TabGroupId> new_focused_group_id,
++      std::optional<tab_groups::TabGroupId> old_focused_group_id) override;
++
++ private:
++  int FindTabIndex(const std::string& id) const;
++  void ScheduleSnapshotChanged();
++  void NotifySnapshotChanged();
++
++  const raw_ptr<Browser> browser_;
++  const raw_ptr<Profile> profile_;
++  const raw_ptr<EvoShellHostView> host_;
++  base::RepeatingCallbackList<void(const base::DictValue&)>
++      snapshot_callbacks_;
++  std::string active_rail_target_ = "ask-evo";
++  bool notification_scheduled_ = false;
++  base::WeakPtrFactory<EvoShellCoordinator> weak_ptr_factory_{this};
++};
++
++}  // namespace shell
++}  // namespace evo
++
++#endif  // CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_COORDINATOR_H_
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_prefs.cc b/chrome/browser/ui/evo_shell/evo_shell_prefs.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..c3b14d2465df4d583b311dd75618a4b0a3414a52
+--- /dev/null
++++ b/chrome/browser/ui/evo_shell/evo_shell_prefs.cc
+@@ -0,0 +1,13 @@
++// Copyright 2026 SK Productions LLC
++
++#include "chrome/browser/ui/evo_shell/evo_shell_prefs.h"
++
++#include "components/pref_registry/pref_registry_syncable.h"
++
++namespace evo::shell::prefs {
++
++void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
++  registry->RegisterBooleanPref(kSidebarCollapsed, false);
++}
++
++}  // namespace evo::shell::prefs
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_prefs.h b/chrome/browser/ui/evo_shell/evo_shell_prefs.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..bebf46de76aba892c7b447626fb4cd938580ef8f
+--- /dev/null
++++ b/chrome/browser/ui/evo_shell/evo_shell_prefs.h
+@@ -0,0 +1,18 @@
++// Copyright 2026 SK Productions LLC
++
++#ifndef CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_PREFS_H_
++#define CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_PREFS_H_
++
++namespace user_prefs {
++class PrefRegistrySyncable;
++}
++
++namespace evo::shell::prefs {
++
++inline constexpr char kSidebarCollapsed[] = "evo.shell.sidebar_collapsed";
++
++void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
++
++}  // namespace evo::shell::prefs
++
++#endif  // CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_PREFS_H_
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_types.cc b/chrome/browser/ui/evo_shell/evo_shell_types.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..4a554a4d310407b4618b43222db39256e49adb6f
+--- /dev/null
++++ b/chrome/browser/ui/evo_shell/evo_shell_types.cc
+@@ -0,0 +1,73 @@
++// Copyright 2026 SK Productions LLC
++
++#include "chrome/browser/ui/evo_shell/evo_shell_types.h"
++
++namespace evo::shell {
++
++base::DictValue TabSnapshot::ToValue() const {
++  base::DictValue value;
++  value.Set("id", id);
++  value.Set("title", title);
++  if (!url.empty()) {
++    value.Set("url", url);
++  }
++  value.Set("faviconUrl", favicon_url);
++  value.Set("active", active);
++  value.Set("loading", loading);
++  value.Set("pinned", pinned);
++  return value;
++}
++
++base::DictValue FavoriteSnapshot::ToValue() const {
++  base::DictValue value;
++  value.Set("id", id);
++  value.Set("title", title);
++  value.Set("faviconUrl", favicon_url);
++  return value;
++}
++
++base::DictValue SpaceSnapshot::ToValue() const {
++  base::DictValue value;
++  value.Set("id", id);
++  value.Set("name", name);
++  value.Set("mode", mode);
++  if (badge > 0) {
++    value.Set("badge", badge);
++  }
++  return value;
++}
++
++base::DictValue FolderSnapshot::ToValue() const {
++  base::ListValue child_values;
++  for (const auto& child : children) {
++    child_values.Append(child.ToValue());
++  }
++  base::DictValue value;
++  value.Set("id", id);
++  value.Set("title", title);
++  value.Set("children", std::move(child_values));
++  return value;
++}
++
++base::DictValue ShellSnapshot::ToValue() const {
++  auto serialize = [](const auto& values) {
++    base::ListValue result;
++    for (const auto& value : values) {
++      result.Append(value.ToValue());
++    }
++    return result;
++  };
++
++  base::DictValue value;
++  value.Set("activeSpaceId", active_space_id);
++  value.Set("spaces", serialize(spaces));
++  value.Set("favorites", serialize(favorites));
++  value.Set("pinnedTabs", serialize(pinned_tabs));
++  value.Set("folders", serialize(folders));
++  value.Set("openTabs", serialize(open_tabs));
++  value.Set("sidebarCollapsed", sidebar_collapsed);
++  value.Set("activeRailTarget", active_rail_target);
++  return value;
++}
++
++}  // namespace evo::shell
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_types.h b/chrome/browser/ui/evo_shell/evo_shell_types.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..ebadb05fda1651215215fb4bc5d859eb2c837c6c
+--- /dev/null
++++ b/chrome/browser/ui/evo_shell/evo_shell_types.h
+@@ -0,0 +1,60 @@
++// Copyright 2026 SK Productions LLC
++
++#ifndef CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_TYPES_H_
++#define CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_TYPES_H_
++
++#include <string>
++#include <vector>
++
++#include "base/values.h"
++
++namespace evo::shell {
++
++struct TabSnapshot {
++  base::DictValue ToValue() const;
++  std::string id;
++  std::string title;
++  std::string url;
++  std::string favicon_url;
++  bool active = false;
++  bool loading = false;
++  bool pinned = false;
++};
++
++struct FavoriteSnapshot {
++  base::DictValue ToValue() const;
++  std::string id;
++  std::string title;
++  std::string favicon_url;
++};
++
++struct SpaceSnapshot {
++  base::DictValue ToValue() const;
++  std::string id;
++  std::string name;
++  std::string mode;
++  int badge = 0;
++};
++
++struct FolderSnapshot {
++  base::DictValue ToValue() const;
++  std::string id;
++  std::string title;
++  std::vector<TabSnapshot> children;
++};
++
++struct ShellSnapshot {
++  base::DictValue ToValue() const;
++  std::string active_space_id;
++  std::vector<SpaceSnapshot> spaces;
++  std::vector<FavoriteSnapshot> favorites;
++  std::vector<TabSnapshot> pinned_tabs;
++  std::vector<FolderSnapshot> folders;
++  std::vector<TabSnapshot> open_tabs;
++  bool sidebar_collapsed = false;
++  std::string active_rail_target = "ask-evo";
++};
++
++}  // namespace evo::shell
++
++#endif  // CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_TYPES_H_
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index 0ace1d14e85306709033ccb209c4bf2f15cba6ac..52268c13aea02aa9c3fc319267d4d8837544a87c 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -97,6 +97,7 @@
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/context_highlight/context_highlight_window_feature.h"
+ #include "chrome/browser/ui/dialogs/browser_dialogs.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_coordinator.h"
+ #include "chrome/browser/ui/evo_shell/evo_shell_features.h"
+ #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
+ #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
+@@ -1196,11 +1197,13 @@ BrowserView::BrowserView(Browser* browser)
+   if (GetIsNormalType() &&
+       base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell)) {
+     evo_shell_host_ = AddChildView(std::make_unique<evo::EvoShellHostView>(
+-        browser_->profile(),
++        browser_->profile(), this,
+         base::BindRepeating(&BrowserView::OnEvoShellFallback,
+                             base::Unretained(this)),
+         base::BindRepeating(&BrowserView::OnEvoShellReady,
+                             base::Unretained(this))));
++    evo_shell_coordinator_ = std::make_unique<evo::shell::EvoShellCoordinator>(
++        browser_.get(), browser_->profile(), evo_shell_host_);
+   }
+ 
+   top_container_ = AddChildView(std::make_unique<TopContainerView>(this));
+@@ -1427,6 +1430,8 @@ BrowserView::~BrowserView() {
+   // message loop, which may run by Browser destructor.
+   loading_animation_timer_.Stop();
+ 
++  evo_shell_coordinator_.reset();
++
+   // Reset autofill bubble handler to make sure it does not out-live toolbar,
+   // since it is responsible for showing autofill related bubbles from toolbar's
+   // child views and it is an observer for avatar toolbar button if any.
+diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
+index fcc53a4949158193b636681b17b163229fcd9bc4..aa5c6e64422701d539b5694f95f30b2ec39cd8fb 100644
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -103,6 +103,9 @@ class ClaudePanelView;
+ class CommandBarView;
+ class EvoShellHostView;
+ enum class EvoShellFallbackReason;
++namespace shell {
++class EvoShellCoordinator;
++}
+ class RightRailView;
+ }  // namespace evo
+ 
+@@ -295,6 +298,9 @@ class BrowserView : public BrowserWindow,
+     return !evo_shell_active_;
+   }
+   gfx::Rect evo_traffic_light_reserved_bounds_for_testing() const;
++  evo::shell::EvoShellCoordinator* evo_shell_coordinator() const {
++    return evo_shell_coordinator_.get();
++  }
+ 
+   ProjectsPanelView* projects_panel_container_for_testing() const {
+     return projects_panel_container_;
+@@ -1290,6 +1296,7 @@ class BrowserView : public BrowserWindow,
+   // Evo's browser-shell surfaces. These are intentionally owned by the
+   // BrowserView so they remain stable as WebContents and Spaces change.
+   raw_ptr<evo::EvoShellHostView> evo_shell_host_ = nullptr;
++  std::unique_ptr<evo::shell::EvoShellCoordinator> evo_shell_coordinator_;
+   raw_ptr<evo::RightRailView> evo_right_rail_ = nullptr;
+   raw_ptr<evo::ClaudePanelView> evo_claude_panel_ = nullptr;
+   raw_ptr<evo::CommandBarView> evo_command_bar_ = nullptr;
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view.cc b/chrome/browser/ui/views/frame/evo_shell_host_view.cc
+index 38e97dd939678d72310277656582f6d76405a705..bfdda0aacbe31fcb3dc44ac1902155ffd96f92e1 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_host_view.cc
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view.cc
+@@ -7,11 +7,11 @@
+ 
+ #include "base/functional/bind.h"
+ #include "base/strings/strcat.h"
++#include "base/supports_user_data.h"
+ #include "cc/paint/paint_flags.h"
+ #include "cc/paint/paint_shader.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/common/webui_url_constants.h"
+-#include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/browser/web_contents_observer.h"
+ #include "third_party/skia/include/core/SkColor.h"
+@@ -29,6 +29,13 @@ namespace {
+ constexpr int kTrafficLightInset = 18;
+ constexpr int kTrafficLightWidth = 60;
+ constexpr int kTrafficLightHeight = 14;
++constexpr char kEvoShellOwnerKey = 0;
++
++class EvoShellOwnerData : public base::SupportsUserData::Data {
++ public:
++  explicit EvoShellOwnerData(BrowserView* owner) : owner_(owner) {}
++  raw_ptr<BrowserView> owner_;
++};
+ 
+ std::array<SkColor4f, 3> ThemeColors(EvoNativeTheme theme) {
+   switch (theme) {
+@@ -66,15 +73,6 @@ class EvoShellHostView::SurfaceObserver : public content::WebContentsObserver {
+         host_(host),
+         surface_(surface) {}
+ 
+-  void DidFinishNavigation(
+-      content::NavigationHandle* navigation_handle) override {
+-    if (navigation_handle->IsInPrimaryMainFrame() &&
+-        navigation_handle->HasCommitted() &&
+-        !navigation_handle->IsErrorPage()) {
+-      host_->MarkSurfaceReady(surface_);
+-    }
+-  }
+-
+   void WebContentsDestroyed() override {
+     host_->ActivateFallback(surface_ == EvoShellSurface::kSidebar
+                                 ? EvoShellFallbackReason::kSidebarDestroyed
+@@ -87,6 +85,7 @@ class EvoShellHostView::SurfaceObserver : public content::WebContentsObserver {
+ };
+ 
+ EvoShellHostView::EvoShellHostView(Profile* profile,
++                                   BrowserView* owner,
+                                    FallbackCallback fallback_callback,
+                                    base::RepeatingClosure ready_callback,
+                                    base::TimeDelta readiness_timeout)
+@@ -102,6 +101,10 @@ EvoShellHostView::EvoShellHostView(Profile* profile,
+   sidebar_web_view_ = AddChildView(std::make_unique<views::WebView>(profile));
+   right_rail_web_view_ =
+       AddChildView(std::make_unique<views::WebView>(profile));
++  sidebar_web_view_->GetWebContents()->SetUserData(
++      &kEvoShellOwnerKey, std::make_unique<EvoShellOwnerData>(owner));
++  right_rail_web_view_->GetWebContents()->SetUserData(
++      &kEvoShellOwnerKey, std::make_unique<EvoShellOwnerData>(owner));
+   sidebar_web_view_->SetVisible(false);
+   right_rail_web_view_->SetVisible(false);
+ 
+@@ -161,6 +164,17 @@ EvoShellLayout EvoShellHostView::CalculateLayout(
+   return layout;
+ }
+ 
++// static
++BrowserView* EvoShellHostView::GetOwnerForWebContents(
++    content::WebContents* web_contents) {
++  if (!web_contents) {
++    return nullptr;
++  }
++  auto* data = static_cast<EvoShellOwnerData*>(
++      web_contents->GetUserData(&kEvoShellOwnerKey));
++  return data ? data->owner_.get() : nullptr;
++}
++
+ void EvoShellHostView::SetSidebarCollapsed(bool collapsed) {
+   if (sidebar_collapsed_ == collapsed) {
+     return;
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view.h b/chrome/browser/ui/views/frame/evo_shell_host_view.h
+index b0c8129f6fd36a645f7aea340638465c93e451be..2e589a8333eef327b7b9d0f21fb17cbd1972f8d4 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_host_view.h
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view.h
+@@ -15,6 +15,11 @@
+ #include "ui/views/view.h"
+ 
+ class Profile;
++class BrowserView;
++
++namespace content {
++class WebContents;
++}
+ 
+ namespace views {
+ class WebView;
+@@ -57,6 +62,7 @@ class EvoShellHostView : public views::View {
+   static constexpr int kRightRailWidth = shell::tokens::kRightRailWidth;
+ 
+   EvoShellHostView(Profile* profile,
++                   BrowserView* owner,
+                    FallbackCallback fallback_callback,
+                    base::RepeatingClosure ready_callback,
+                    base::TimeDelta readiness_timeout = base::Seconds(8));
+@@ -67,6 +73,8 @@ class EvoShellHostView : public views::View {
+   static EvoShellLayout CalculateLayout(const gfx::Rect& available_bounds,
+                                         bool sidebar_collapsed,
+                                         bool right_rail_visible);
++  static BrowserView* GetOwnerForWebContents(
++      content::WebContents* web_contents);
+ 
+   void SetSidebarCollapsed(bool collapsed);
+   void SetRightRailVisible(bool visible);
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc b/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
+index 447bad1f733c9aa94f1a94dadebacb2d4f92d6c7..fbc40512d81b39b657ed6cb10aa980238e2900b2 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
+@@ -98,7 +98,7 @@ TEST(EvoShellHostViewTest, ContentWidthNeverBecomesNegative) {
+ TEST(EvoShellHostViewTest, FallbackCallbackRunsExactlyOnce) {
+   int fallback_count = 0;
+   EvoShellHostView host(
+-      /*profile=*/nullptr,
++      /*profile=*/nullptr, /*owner=*/nullptr,
+       base::BindRepeating([](int* count, EvoShellFallbackReason) { ++*count; },
+                           &fallback_count),
+       base::DoNothing(), base::TimeDelta());
+diff --git a/chrome/browser/ui/webui/evo_shell/evo_shell_ui.cc b/chrome/browser/ui/webui/evo_shell/evo_shell_ui.cc
+index a55bc19290c694a0238db7a8f885f06dcf14d46a..932754fca6235508d8b3d2a390e28cb8835f98fd 100644
+--- a/chrome/browser/ui/webui/evo_shell/evo_shell_ui.cc
++++ b/chrome/browser/ui/webui/evo_shell/evo_shell_ui.cc
+@@ -2,20 +2,143 @@
+ 
+ #include "chrome/browser/ui/webui/evo_shell/evo_shell_ui.h"
+ 
++#include <memory>
++#include <string>
++
+ #include "base/feature_list.h"
++#include "base/functional/bind.h"
++#include "base/values.h"
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_coordinator.h"
+ #include "chrome/browser/ui/evo_shell/evo_shell_features.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
+ #include "chrome/grit/evo_shell_resources.h"
+ #include "chrome/grit/evo_shell_resources_map.h"
+ #include "content/public/browser/browser_context.h"
++#include "content/public/browser/web_contents.h"
+ #include "content/public/browser/web_ui.h"
+ #include "content/public/browser/web_ui_data_source.h"
++#include "content/public/browser/web_ui_message_handler.h"
++#include "services/network/public/mojom/content_security_policy.mojom.h"
+ #include "ui/webui/webui_util.h"
+ 
++namespace {
++
++class EvoShellMessageHandler : public content::WebUIMessageHandler {
++ public:
++  EvoShellMessageHandler() = default;
++  EvoShellMessageHandler(const EvoShellMessageHandler&) = delete;
++  EvoShellMessageHandler& operator=(const EvoShellMessageHandler&) = delete;
++  ~EvoShellMessageHandler() override = default;
++
++  void RegisterMessages() override {
++    web_ui()->RegisterMessageCallback(
++        "getEvoShellSnapshot",
++        base::BindRepeating(&EvoShellMessageHandler::HandleGetSnapshot,
++                            base::Unretained(this)));
++    web_ui()->RegisterMessageCallback(
++        "dispatchEvoShellAction",
++        base::BindRepeating(&EvoShellMessageHandler::HandleDispatchAction,
++                            base::Unretained(this)));
++    web_ui()->RegisterMessageCallback(
++        "evoShellReady",
++        base::BindRepeating(&EvoShellMessageHandler::HandleReady,
++                            base::Unretained(this)));
++  }
++
++  void OnJavascriptDisallowed() override { snapshot_subscription_ = {}; }
++
++ private:
++  BrowserView* GetOwner() {
++    return evo::EvoShellHostView::GetOwnerForWebContents(
++        web_ui()->GetWebContents());
++  }
++
++  evo::shell::EvoShellCoordinator* GetCoordinator() {
++    BrowserView* owner = GetOwner();
++    return owner ? owner->evo_shell_coordinator() : nullptr;
++  }
++
++  std::string Surface() {
++    const std::string query(
++        web_ui()->GetWebContents()->GetLastCommittedURL().query());
++    if (query.find("surface=sidebar") != std::string::npos) {
++      return "sidebar";
++    }
++    if (query.find("surface=rail") != std::string::npos) {
++      return "rail";
++    }
++    return std::string();
++  }
++
++  void EnsureSubscribed() {
++    if (snapshot_subscription_) {
++      return;
++    }
++    if (auto* coordinator = GetCoordinator()) {
++      snapshot_subscription_ = coordinator->AddSnapshotChangedCallback(
++          base::BindRepeating(&EvoShellMessageHandler::OnSnapshotChanged,
++                              base::Unretained(this)));
++    }
++  }
++
++  void HandleGetSnapshot(const base::ListValue& args) {
++    AllowJavascript();
++    EnsureSubscribed();
++    auto* coordinator = GetCoordinator();
++    ResolveJavascriptCallback(
++        args[0].Clone(), coordinator ? base::Value(coordinator->BuildSnapshot())
++                                     : base::Value(base::DictValue()));
++  }
++
++  void HandleDispatchAction(const base::ListValue& args) {
++    AllowJavascript();
++    auto* coordinator = GetCoordinator();
++    const base::DictValue* action =
++        args.size() > 1 ? args[1].GetIfDict() : nullptr;
++    bool allowed = false;
++    if (coordinator && action) {
++      const std::string* type = action->FindString("type");
++      allowed =
++          type && ((Surface() == "sidebar" && *type != "selectRailTarget") ||
++                   (Surface() == "rail" && *type == "selectRailTarget"));
++    }
++    ResolveJavascriptCallback(
++        args[0].Clone(),
++        base::Value(allowed       ? coordinator->DispatchAction(*action)
++                    : coordinator ? coordinator->BuildSnapshot()
++                                  : base::DictValue()));
++  }
++
++  void HandleReady(const base::ListValue& args) {
++    AllowJavascript();
++    const std::string* requested_surface =
++        args.size() > 1 ? args[1].GetIfString() : nullptr;
++    BrowserView* owner = GetOwner();
++    if (owner && requested_surface && *requested_surface == Surface()) {
++      owner->evo_shell_host_for_testing()->MarkSurfaceReady(
++          *requested_surface == "sidebar" ? evo::EvoShellSurface::kSidebar
++                                          : evo::EvoShellSurface::kRightRail);
++    }
++    ResolveJavascriptCallback(args[0].Clone(), base::Value(true));
++  }
++
++  void OnSnapshotChanged(const base::DictValue& snapshot) {
++    if (IsJavascriptAllowed()) {
++      FireWebUIListener("evo-shell-snapshot-changed",
++                        base::Value(snapshot.Clone()));
++    }
++  }
++
++  base::CallbackListSubscription snapshot_subscription_;
++};
++
++}  // namespace
++
+ bool EvoShellUIConfig::IsWebUIEnabled(
+     content::BrowserContext* browser_context) {
+-  return base::FeatureList::IsEnabled(
+-      evo::features::kEvoHybridBrowserShell);
++  return base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell);
+ }
+ 
+ EvoShellUI::EvoShellUI(content::WebUI* web_ui) : WebUIController(web_ui) {
+@@ -24,4 +147,8 @@ EvoShellUI::EvoShellUI(content::WebUI* web_ui) : WebUIController(web_ui) {
+       profile, chrome::kChromeUIEvoShellHost);
+   webui::SetupWebUIDataSource(source, kEvoShellResources,
+                               IDR_EVO_SHELL_EVO_SHELL_HTML);
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::ImgSrc,
++      "img-src 'self' chrome://resources chrome://favicon2 data:;");
++  web_ui->AddMessageHandler(std::make_unique<EvoShellMessageHandler>());
+ }
+diff --git a/ui/webui/resources/tools/build_webui.gni b/ui/webui/resources/tools/build_webui.gni
+index 0bf652db13ee7ba2b7416566c5db3a45d220cc64..71e494ef09837397c255d946243315de416edffb 100644
+--- a/ui/webui/resources/tools/build_webui.gni
++++ b/ui/webui/resources/tools/build_webui.gni
+@@ -565,6 +565,8 @@ template("build_webui") {
+         "//chrome/browser/resources/conflicts",
+         "//chrome/browser/resources/device_log",
+         "//chrome/browser/resources/downloads",
++        "//chrome/browser/resources/evo_ai",
++        "//chrome/browser/resources/evo_shell",
+         "//chrome/browser/resources/family_link_user_internals",
+         "//chrome/browser/resources/feedback",
+         "//chrome/browser/resources/history",
