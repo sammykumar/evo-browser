@@ -5,6 +5,13 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/workspace.sh"
 
 "${workspace_root}/scripts/check-workspace.sh"
 
+if ! rg -q \
+    'BASE_FEATURE\(kEvoHybridBrowserShell, base::FEATURE_ENABLED_BY_DEFAULT\)' \
+    "${chromium_src}/chrome/browser/ui/evo_shell/evo_shell_features.cc"; then
+    echo "Production promotion requires EvoHybridBrowserShell to be enabled by default." >&2
+    exit 1
+fi
+
 bun_bin="${BUN_BIN:-/opt/homebrew/bin/bun}"
 if [[ ! -x "${bun_bin}" ]]; then
     echo "Bun was not found at ${bun_bin}." >&2

@@ -1,0 +1,21 @@
+From 6d8f1c3b37e053257db2b93c7fd8bf2ecca0b48e Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Tue, 21 Jul 2026 05:54:46 -0500
+Subject: [PATCH 24/24] evo: promote hybrid shell by default
+
+---
+ chrome/browser/ui/evo_shell/evo_shell_features.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_features.cc b/chrome/browser/ui/evo_shell/evo_shell_features.cc
+index 840909192455803625dcc8a5f9df44aca2b7dbb0..f8a4dcdf1e3f1e9e8e6d41fa28d7000b364f2932 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_features.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_features.cc
+@@ -4,6 +4,6 @@
+ 
+ namespace evo::features {
+ 
+-BASE_FEATURE(kEvoHybridBrowserShell, base::FEATURE_DISABLED_BY_DEFAULT);
++BASE_FEATURE(kEvoHybridBrowserShell, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ }  // namespace evo::features
