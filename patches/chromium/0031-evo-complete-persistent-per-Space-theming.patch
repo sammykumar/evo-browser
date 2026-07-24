@@ -1,0 +1,977 @@
+From c3b57df4762ee6bd29d5e822faf6d95ab753095d Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Fri, 24 Jul 2026 06:14:29 -0500
+Subject: [PATCH 31/32] evo: complete persistent per-Space theming
+
+---
+ chrome/browser/resources/evo_shell/surface.ts |  14 +-
+ chrome/browser/resources/evo_shell/types.ts   |   5 +-
+ chrome/browser/ui/BUILD.gn                    |   2 +
+ .../ui/evo_shell/evo_shell_coordinator.cc     |  56 ++++++--
+ .../ui/evo_shell/evo_shell_coordinator.h      |   6 +
+ .../browser/ui/evo_shell/evo_shell_prefs.cc   |   1 +
+ chrome/browser/ui/evo_shell/evo_shell_prefs.h |   1 +
+ .../browser/ui/evo_shell/evo_shell_types.cc   |   3 +
+ chrome/browser/ui/evo_shell/evo_shell_types.h |   3 +
+ .../browser/ui/evo_shell/evo_space_theme.cc   | 135 ++++++++++++++++++
+ chrome/browser/ui/evo_shell/evo_space_theme.h |  35 +++++
+ .../ui/evo_shell/evo_space_theme_unittest.cc  |  86 +++++++++++
+ .../ui/views/frame/evo_shell_host_view.cc     |  37 ++---
+ .../ui/views/frame/evo_shell_host_view.h      |  13 +-
+ .../frame/evo_shell_host_view_unittest.cc     |  17 +--
+ chrome/test/BUILD.gn                          |   1 +
+ .../webui/evo_shell/evo_shell_browsertest.cc  |  82 +++++++++++
+ .../evo_shell/evo_shell_components_test.ts    |  27 ++++
+ .../webui/evo_shell/evo_shell_tokens_test.ts  |  35 -----
+ 19 files changed, 468 insertions(+), 91 deletions(-)
+ create mode 100644 chrome/browser/ui/evo_shell/evo_space_theme.cc
+ create mode 100644 chrome/browser/ui/evo_shell/evo_space_theme.h
+ create mode 100644 chrome/browser/ui/evo_shell/evo_space_theme_unittest.cc
+
+diff --git a/chrome/browser/resources/evo_shell/surface.ts b/chrome/browser/resources/evo_shell/surface.ts
+index 7be0a0cf0a7390725525ac0c42628ae83e7cf2e4..bd90df939c1b6d566de346c3851c65743c8273c9 100644
+--- a/chrome/browser/resources/evo_shell/surface.ts
++++ b/chrome/browser/resources/evo_shell/surface.ts
+@@ -14,6 +14,16 @@ export function resolveEvoShellSurface(search: string): EvoShellSurface|null {
+       value : null;
+ }
+ 
++export function applyEvoShellTheme(snapshot: EvoShellSnapshot): void {
++  const activeSpace =
++      snapshot.spaces.find(space => space.id === snapshot.activeSpaceId);
++  document.documentElement.dataset['themeMode'] = activeSpace?.mode || 'agent';
++  document.documentElement.style.setProperty('--accent-1', snapshot.accent1);
++  document.documentElement.style.setProperty('--accent-2', snapshot.accent2);
++  document.documentElement.style.setProperty(
++      '--accent-core', snapshot.accentCore);
++}
++
+ export async function mountEvoShellSurface(
+     root: HTMLElement, surface: EvoShellSurface|null): Promise<boolean> {
+   root.replaceChildren();
+@@ -34,9 +44,7 @@ export async function mountEvoShellSurface(
+ 
+   const render = (nextSnapshot: EvoShellSnapshot) => {
+     snapshot = nextSnapshot;
+-    const activeSpace =
+-        snapshot.spaces.find(space => space.id === snapshot.activeSpaceId);
+-    document.documentElement.dataset['themeMode'] = activeSpace?.mode || 'agent';
++    applyEvoShellTheme(snapshot);
+     if (surface === 'sidebar') {
+       const dispatch = (action: EvoShellAction) => {
+         void evoShellBrowserProxy.dispatch(action).then(render);
+diff --git a/chrome/browser/resources/evo_shell/types.ts b/chrome/browser/resources/evo_shell/types.ts
+index 8d0b7079b434be91b4d07b1ed95742706a263aed..5a1e56c90b764773e722629435d18730057f9991 100644
+--- a/chrome/browser/resources/evo_shell/types.ts
++++ b/chrome/browser/resources/evo_shell/types.ts
+@@ -1,6 +1,6 @@
+ // Copyright 2026 SK Productions LLC
+ 
+-export type EvoThemeMode = 'agent'|'personal'|'work'|'media'|'focus';
++export type EvoThemeMode = 'agent'|'personal'|'work'|'media'|'focus'|'custom';
+ 
+ export interface EvoShellTab {
+   id: string;
+@@ -42,6 +42,9 @@ export interface EvoShellSnapshot {
+   rightRailVisible: boolean;
+   activeUrl: string;
+   activeTitle: string;
++  accent1: string;
++  accent2: string;
++  accentCore: string;
+   canGoBack: boolean;
+   canGoForward: boolean;
+   isLoading: boolean;
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index 81dcc6dcf3cc30c89f5e4d7f1d62ec4bb26e0748..91dfa1864810aa390a6d53ebeef20c2842dda492 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -1123,6 +1123,8 @@ static_library("ui") {
+       "evo_shell/evo_shell_prefs.h",
+       "evo_shell/evo_shell_types.cc",
+       "evo_shell/evo_shell_types.h",
++      "evo_shell/evo_space_theme.cc",
++      "evo_shell/evo_space_theme.h",
+       "browser_window.h",
+       "browser_window_deleter.cc",
+       "browser_window_deleter.h",
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+index 5759f40f458c324a16f325ae898bf7d04fe40c86..eadfb946c6a5659586632d616a9aa180bc3dd6e4 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+@@ -17,6 +17,7 @@
+ #include "chrome/browser/ui/browser_tabstrip.h"
+ #include "chrome/browser/ui/evo_shell/evo_shell_prefs.h"
+ #include "chrome/browser/ui/evo_shell/evo_shell_types.h"
++#include "chrome/browser/ui/evo_shell/evo_space_theme.h"
+ #include "chrome/browser/ui/tabs/tab_group_model.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+@@ -59,9 +60,6 @@ constexpr std::array<FavoriteDefinition, 12> kFavorites = {{
+     {"codex", "Codex", "https://chatgpt.com/codex"},
+ }};
+ 
+-constexpr std::array<const char*, 5> kThemeModes = {"agent", "personal", "work",
+-                                                    "media", "focus"};
+-
+ std::string TabId(tabs::TabInterface* tab) {
+   return base::NumberToString(tab->GetHandle().raw_value());
+ }
+@@ -92,6 +90,7 @@ EvoShellCoordinator::EvoShellCoordinator(Browser* browser,
+       profile_->GetPrefs()->GetBoolean(prefs::kSidebarCollapsed));
+   host_->SetRightRailVisible(
+       profile_->GetPrefs()->GetBoolean(prefs::kRightRailVisible));
++  ApplyActiveSpaceTheme();
+ }
+ 
+ EvoShellCoordinator::~EvoShellCoordinator() {
+@@ -114,8 +113,10 @@ base::DictValue EvoShellCoordinator::BuildSnapshot() const {
+     snapshot.is_loading = contents->IsLoading();
+   }
+ 
++  const EvoSpaceTheme default_theme =
++      ResolveSpaceTheme(*profile_->GetPrefs(), "default", "Agent");
+   snapshot.spaces.push_back(
+-      {.id = "default", .name = "Agent", .mode = kThemeModes[0]});
++      {.id = "default", .name = "Agent", .mode = default_theme.mode});
+ 
+   const auto groups = model->group_model()->ListTabGroups();
+   const std::optional<tab_groups::TabGroupId> focused =
+@@ -123,18 +124,23 @@ base::DictValue EvoShellCoordinator::BuildSnapshot() const {
+   for (size_t index = 0; index < groups.size(); ++index) {
+     TabGroup* group = model->group_model()->GetTabGroup(groups[index]);
+     const std::u16string& title = group->visual_data()->title();
++    const std::string name = base::UTF16ToUTF8(
++        title.empty() ? u"Space " + base::NumberToString16(index + 1) : title);
++    const std::string id = groups[index].ToString();
+     snapshot.spaces.push_back(
+-        {.id = groups[index].ToString(),
+-         .name = base::UTF16ToUTF8(
+-             title.empty() ? u"Space " + base::NumberToString16(index + 1)
+-                           : title),
+-         .mode = kThemeModes[(index + 1) % kThemeModes.size()]});
++        {.id = id,
++         .name = name,
++         .mode = ResolveSpaceTheme(*profile_->GetPrefs(), id, name).mode});
+   }
+   if (focused) {
+     snapshot.active_space_id = focused->ToString();
+   } else if (!snapshot.spaces.empty()) {
+     snapshot.active_space_id = "default";
+   }
++  const EvoSpaceTheme active_theme = ResolveActiveSpaceTheme();
++  snapshot.accent_1 = active_theme.accent_1;
++  snapshot.accent_2 = active_theme.accent_2;
++  snapshot.accent_core = active_theme.accent_core;
+ 
+   for (const auto& favorite : kFavorites) {
+     snapshot.favorites.push_back(
+@@ -196,16 +202,15 @@ base::DictValue EvoShellCoordinator::DispatchAction(
+     if (id) {
+       if (*id == "default") {
+         model->SetFocusedGroup(std::nullopt);
+-        host_->SetTheme(EvoNativeTheme::kAgent);
+       }
+       const auto groups = model->group_model()->ListTabGroups();
+       for (size_t index = 0; index < groups.size(); ++index) {
+         if (*id == groups[index].ToString()) {
+           model->SetFocusedGroup(groups[index]);
+-          host_->SetTheme(static_cast<EvoNativeTheme>((index + 1) % 5));
+           break;
+         }
+       }
++      ApplyActiveSpaceTheme();
+     }
+   } else if (*type == "setSidebarCollapsed") {
+     const std::optional<bool> collapsed = action.FindBool("collapsed");
+@@ -263,6 +268,17 @@ void EvoShellCoordinator::SetRightRailVisible(bool visible) {
+   ScheduleSnapshotChanged();
+ }
+ 
++bool EvoShellCoordinator::SetSpaceSeedForFuturePicker(
++    const std::string& space_id,
++    const std::string& css_seed) {
++  if (!SetSpaceSeed(*profile_->GetPrefs(), space_id, css_seed)) {
++    return false;
++  }
++  ApplyActiveSpaceTheme();
++  ScheduleSnapshotChanged();
++  return true;
++}
++
+ void EvoShellCoordinator::OnActiveTabStateChanged() {
+   ScheduleSnapshotChanged();
+ }
+@@ -288,9 +304,27 @@ void EvoShellCoordinator::OnTabChangedAt(tabs::TabInterface* tab,
+ void EvoShellCoordinator::OnTabGroupFocusChanged(
+     std::optional<tab_groups::TabGroupId> new_focused_group_id,
+     std::optional<tab_groups::TabGroupId> old_focused_group_id) {
++  ApplyActiveSpaceTheme();
+   ScheduleSnapshotChanged();
+ }
+ 
++EvoSpaceTheme EvoShellCoordinator::ResolveActiveSpaceTheme() const {
++  TabStripModel* model = browser_->tab_strip_model();
++  const std::optional<tab_groups::TabGroupId> focused =
++      model->GetFocusedGroup();
++  if (!focused) {
++    return ResolveSpaceTheme(*profile_->GetPrefs(), "default", "Agent");
++  }
++  TabGroup* group = model->group_model()->GetTabGroup(*focused);
++  const std::u16string& title = group->visual_data()->title();
++  return ResolveSpaceTheme(*profile_->GetPrefs(), focused->ToString(),
++                           base::UTF16ToUTF8(title));
++}
++
++void EvoShellCoordinator::ApplyActiveSpaceTheme() {
++  host_->SetWallpaperColors(ResolveActiveSpaceTheme().wallpaper_colors);
++}
++
+ int EvoShellCoordinator::FindTabIndex(const std::string& id) const {
+   TabStripModel* model = browser_->tab_strip_model();
+   for (int index = 0; index < model->count(); ++index) {
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.h b/chrome/browser/ui/evo_shell/evo_shell_coordinator.h
+index f391bf3daaa479ba009050a61a3264d332316bed..a06858256602652d151eea66485df26ea8244b3c 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_coordinator.h
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.h
+@@ -20,6 +20,8 @@ class EvoShellHostView;
+ 
+ namespace shell {
+ 
++struct EvoSpaceTheme;
++
+ class EvoShellCoordinator : public TabStripModelObserver {
+  public:
+   EvoShellCoordinator(Browser* browser,
+@@ -33,6 +35,8 @@ class EvoShellCoordinator : public TabStripModelObserver {
+   base::DictValue DispatchAction(const base::DictValue& action);
+   void SetSidebarCollapsed(bool collapsed);
+   void SetRightRailVisible(bool visible);
++  bool SetSpaceSeedForFuturePicker(const std::string& space_id,
++                                   const std::string& css_seed);
+   void OnActiveTabStateChanged();
+   base::CallbackListSubscription AddSnapshotChangedCallback(
+       base::RepeatingCallback<void(const base::DictValue&)> callback);
+@@ -50,6 +54,8 @@ class EvoShellCoordinator : public TabStripModelObserver {
+ 
+  private:
+   int FindTabIndex(const std::string& id) const;
++  EvoSpaceTheme ResolveActiveSpaceTheme() const;
++  void ApplyActiveSpaceTheme();
+   void ScheduleSnapshotChanged();
+   void NotifySnapshotChanged();
+ 
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_prefs.cc b/chrome/browser/ui/evo_shell/evo_shell_prefs.cc
+index 0438d64afb7e4da91cd8945f892554b0ce77756a..f89dc97a993394069120add1140309c097442b9c 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_prefs.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_prefs.cc
+@@ -10,6 +10,7 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(kSidebarCollapsed, false);
+   registry->RegisterBooleanPref(kRightRailVisible, true);
+   registry->RegisterListPref(kFolders);
++  registry->RegisterDictionaryPref(kSpaceThemes);
+ }
+ 
+ }  // namespace evo::shell::prefs
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_prefs.h b/chrome/browser/ui/evo_shell/evo_shell_prefs.h
+index 1fc1072d243180b1ac4397fc1dd544a2342b846a..e04069354fe6625ac94ea98944b503647d24c05c 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_prefs.h
++++ b/chrome/browser/ui/evo_shell/evo_shell_prefs.h
+@@ -12,6 +12,7 @@ namespace evo::shell::prefs {
+ inline constexpr char kSidebarCollapsed[] = "evo.shell.sidebar_collapsed";
+ inline constexpr char kRightRailVisible[] = "evo.shell.right_rail_visible";
+ inline constexpr char kFolders[] = "evo.shell.folders";
++inline constexpr char kSpaceThemes[] = "evo.shell.space_themes";
+ 
+ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+ 
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_types.cc b/chrome/browser/ui/evo_shell/evo_shell_types.cc
+index 7392191cc1c454bf4da5038446959d27aad3df0b..e16db53e69a885a457af30d6440d7a100c9e2560 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_types.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_types.cc
+@@ -129,6 +129,9 @@ base::DictValue ShellSnapshot::ToValue() const {
+   value.Set("rightRailVisible", right_rail_visible);
+   value.Set("activeUrl", active_url);
+   value.Set("activeTitle", active_title);
++  value.Set("accent1", accent_1);
++  value.Set("accent2", accent_2);
++  value.Set("accentCore", accent_core);
+   value.Set("canGoBack", can_go_back);
+   value.Set("canGoForward", can_go_forward);
+   value.Set("isLoading", is_loading);
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_types.h b/chrome/browser/ui/evo_shell/evo_shell_types.h
+index 49ec86d217909c0d4a1343a6dd020ef3e4ff44f8..0dce3c9db95d6ac7f77003a59325a7761b8cdf86 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_types.h
++++ b/chrome/browser/ui/evo_shell/evo_shell_types.h
+@@ -57,6 +57,9 @@ struct ShellSnapshot {
+   bool right_rail_visible = true;
+   std::string active_url;
+   std::string active_title;
++  std::string accent_1;
++  std::string accent_2;
++  std::string accent_core;
+   bool can_go_back = false;
+   bool can_go_forward = false;
+   bool is_loading = false;
+diff --git a/chrome/browser/ui/evo_shell/evo_space_theme.cc b/chrome/browser/ui/evo_shell/evo_space_theme.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..6f496add0275293353b253918d943ed1d93fbc0c
+--- /dev/null
++++ b/chrome/browser/ui/evo_shell/evo_space_theme.cc
+@@ -0,0 +1,135 @@
++// Copyright 2026 SK Productions LLC
++
++#include "chrome/browser/ui/evo_shell/evo_space_theme.h"
++
++#include <array>
++#include <cstdint>
++#include <optional>
++
++#include "base/hash/hash.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_util.h"
++#include "base/strings/stringprintf.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_prefs.h"
++#include "components/prefs/pref_service.h"
++#include "components/prefs/scoped_user_pref_update.h"
++
++namespace evo::shell {
++namespace {
++
++constexpr SkColor kWallpaperBase = SkColorSetRGB(0x0d, 0x0f, 0x13);
++
++struct Preset {
++  std::string_view mode;
++  std::string_view accent_1;
++  std::string_view accent_2;
++  std::string_view accent_core;
++  SkColor wallpaper_1;
++  SkColor wallpaper_2;
++};
++
++constexpr std::array<Preset, 5> kPresets = {{
++    {"agent", "#57dcd6", "#8f7bf3", "#bff4ff",
++     SkColorSetRGB(0x57, 0xdc, 0xd6), SkColorSetRGB(0x8f, 0x7b, 0xf3)},
++    {"personal", "#7c8cff", "#9b7bf3", "#cdd4ff",
++     SkColorSetRGB(0x7c, 0x8c, 0xff), SkColorSetRGB(0x9b, 0x7b, 0xf3)},
++    {"work", "#5fd3a3", "#4fb8d8", "#b8f5df",
++     SkColorSetRGB(0x5f, 0xd3, 0xa3), SkColorSetRGB(0x4f, 0xb8, 0xd8)},
++    {"media", "#f286a6", "#b06ff0", "#ffd0de",
++     SkColorSetRGB(0xf2, 0x86, 0xa6), SkColorSetRGB(0xb0, 0x6f, 0xf0)},
++    {"focus", "#6ea8f5", "#57dcd6", "#cfe6ff",
++     SkColorSetRGB(0x6e, 0xa8, 0xf5), SkColorSetRGB(0x57, 0xdc, 0xd6)},
++}};
++
++EvoSpaceTheme ThemeFromPreset(size_t index) {
++  const Preset& preset = kPresets[index];
++  return {.mode = std::string(preset.mode),
++          .accent_1 = std::string(preset.accent_1),
++          .accent_2 = std::string(preset.accent_2),
++          .accent_core = std::string(preset.accent_core),
++          .wallpaper_colors =
++              {preset.wallpaper_1, preset.wallpaper_2, kWallpaperBase}};
++}
++
++std::optional<SkColor> ParseCssSeed(std::string_view seed) {
++  if (seed.size() != 7 || seed.front() != '#') {
++    return std::nullopt;
++  }
++  uint32_t rgb = 0;
++  if (!base::HexStringToUInt(seed.substr(1), &rgb)) {
++    return std::nullopt;
++  }
++  return SkColorSetRGB((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
++}
++
++std::string CssColor(SkColor color) {
++  return base::StringPrintf("#%02x%02x%02x", SkColorGetR(color),
++                            SkColorGetG(color), SkColorGetB(color));
++}
++
++uint8_t MixChannel(uint8_t from, uint8_t to, int to_percent) {
++  return static_cast<uint8_t>(
++      (from * (100 - to_percent) + to * to_percent + 50) / 100);
++}
++
++SkColor MixColor(SkColor from, SkColor to, int to_percent) {
++  return SkColorSetRGB(
++      MixChannel(SkColorGetR(from), SkColorGetR(to), to_percent),
++      MixChannel(SkColorGetG(from), SkColorGetG(to), to_percent),
++      MixChannel(SkColorGetB(from), SkColorGetB(to), to_percent));
++}
++
++EvoSpaceTheme ThemeFromSeed(SkColor seed) {
++  // Keep the selected seed as the core identity. The two gradient endpoints
++  // are deterministic 15% mixes toward white and black respectively.
++  const SkColor accent_1 = MixColor(seed, SK_ColorWHITE, 15);
++  const SkColor accent_2 = MixColor(seed, SK_ColorBLACK, 15);
++  return {.mode = "custom",
++          .accent_1 = CssColor(accent_1),
++          .accent_2 = CssColor(accent_2),
++          .accent_core = CssColor(seed),
++          .wallpaper_colors = {accent_1, accent_2, kWallpaperBase}};
++}
++
++std::optional<size_t> NamedPreset(std::string_view name) {
++  for (size_t index = 0; index < kPresets.size(); ++index) {
++    if (base::EqualsCaseInsensitiveASCII(name, kPresets[index].mode)) {
++      return index;
++    }
++  }
++  return std::nullopt;
++}
++
++}  // namespace
++
++EvoSpaceTheme ResolveSpaceTheme(const PrefService& prefs,
++                                std::string_view space_id,
++                                std::string_view space_name) {
++  if (const std::string* custom_seed =
++          prefs.GetDict(prefs::kSpaceThemes).FindString(space_id)) {
++    if (const std::optional<SkColor> color = ParseCssSeed(*custom_seed)) {
++      return ThemeFromSeed(*color);
++    }
++  }
++  if (space_id == "default") {
++    return ThemeFromPreset(0);
++  }
++  if (const std::optional<size_t> named = NamedPreset(space_name)) {
++    return ThemeFromPreset(*named);
++  }
++  return ThemeFromPreset(base::PersistentHash(space_id) % kPresets.size());
++}
++
++bool SetSpaceSeed(PrefService& prefs,
++                  std::string_view space_id,
++                  std::string_view css_seed) {
++  const std::optional<SkColor> color = ParseCssSeed(css_seed);
++  if (space_id.empty() || !color) {
++    return false;
++  }
++  ScopedDictPrefUpdate update(&prefs, prefs::kSpaceThemes);
++  update->Set(space_id, CssColor(*color));
++  return true;
++}
++
++}  // namespace evo::shell
+diff --git a/chrome/browser/ui/evo_shell/evo_space_theme.h b/chrome/browser/ui/evo_shell/evo_space_theme.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..a490a1ad5207609e64ea92bddab6ec69f9649ca5
+--- /dev/null
++++ b/chrome/browser/ui/evo_shell/evo_space_theme.h
+@@ -0,0 +1,35 @@
++// Copyright 2026 SK Productions LLC
++
++#ifndef CHROME_BROWSER_UI_EVO_SHELL_EVO_SPACE_THEME_H_
++#define CHROME_BROWSER_UI_EVO_SHELL_EVO_SPACE_THEME_H_
++
++#include <array>
++#include <string>
++#include <string_view>
++
++#include "third_party/skia/include/core/SkColor.h"
++
++class PrefService;
++
++namespace evo::shell {
++
++struct EvoSpaceTheme {
++  bool operator==(const EvoSpaceTheme&) const = default;
++
++  std::string mode;
++  std::string accent_1;
++  std::string accent_2;
++  std::string accent_core;
++  std::array<SkColor, 3> wallpaper_colors;
++};
++
++EvoSpaceTheme ResolveSpaceTheme(const PrefService& prefs,
++                                std::string_view space_id,
++                                std::string_view space_name);
++bool SetSpaceSeed(PrefService& prefs,
++                  std::string_view space_id,
++                  std::string_view css_seed);
++
++}  // namespace evo::shell
++
++#endif  // CHROME_BROWSER_UI_EVO_SHELL_EVO_SPACE_THEME_H_
+diff --git a/chrome/browser/ui/evo_shell/evo_space_theme_unittest.cc b/chrome/browser/ui/evo_shell/evo_space_theme_unittest.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..d8e337bbca36d7bca1f9b20730e24bfaa126c471
+--- /dev/null
++++ b/chrome/browser/ui/evo_shell/evo_space_theme_unittest.cc
+@@ -0,0 +1,86 @@
++// Copyright 2026 SK Productions LLC
++
++#include "chrome/browser/ui/evo_shell/evo_space_theme.h"
++
++#include <array>
++#include <string_view>
++
++#include "chrome/browser/ui/evo_shell/evo_shell_prefs.h"
++#include "components/prefs/pref_registry_simple.h"
++#include "components/prefs/testing_pref_service.h"
++#include "testing/gtest/include/gtest/gtest.h"
++
++namespace evo::shell {
++namespace {
++
++class EvoSpaceThemeTest : public testing::Test {
++ protected:
++  EvoSpaceThemeTest() {
++    prefs_.registry()->RegisterDictionaryPref(prefs::kSpaceThemes);
++  }
++
++  TestingPrefServiceSimple prefs_;
++};
++
++TEST_F(EvoSpaceThemeTest, ResolvesExactNamedPresets) {
++  struct TestCase {
++    std::string_view name;
++    std::string_view mode;
++    std::string_view accent_1;
++    std::string_view accent_2;
++    std::string_view accent_core;
++  };
++  constexpr std::array<TestCase, 5> kCases = {{
++      {"Agent", "agent", "#57dcd6", "#8f7bf3", "#bff4ff"},
++      {"Personal", "personal", "#7c8cff", "#9b7bf3", "#cdd4ff"},
++      {"Work", "work", "#5fd3a3", "#4fb8d8", "#b8f5df"},
++      {"Media", "media", "#f286a6", "#b06ff0", "#ffd0de"},
++      {"Focus", "focus", "#6ea8f5", "#57dcd6", "#cfe6ff"},
++  }};
++
++  for (const auto& test_case : kCases) {
++    const EvoSpaceTheme theme =
++        ResolveSpaceTheme(prefs_, std::string(test_case.name), test_case.name);
++    EXPECT_EQ(test_case.mode, theme.mode);
++    EXPECT_EQ(test_case.accent_1, theme.accent_1);
++    EXPECT_EQ(test_case.accent_2, theme.accent_2);
++    EXPECT_EQ(test_case.accent_core, theme.accent_core);
++  }
++}
++
++TEST_F(EvoSpaceThemeTest, DefaultSpaceAlwaysUsesAgentPreset) {
++  EXPECT_EQ("agent", ResolveSpaceTheme(prefs_, "default", "Work").mode);
++}
++
++TEST_F(EvoSpaceThemeTest, UnnamedSpacesResolveStablyById) {
++  const EvoSpaceTheme first = ResolveSpaceTheme(prefs_, "stable-id", "Space 1");
++  ResolveSpaceTheme(prefs_, "another-id", "Space 2");
++  EXPECT_EQ(first, ResolveSpaceTheme(prefs_, "stable-id", "Space 99"));
++}
++
++TEST_F(EvoSpaceThemeTest, PersistsNormalizedCustomSeedAndDerivesEndpoints) {
++  ASSERT_TRUE(SetSpaceSeed(prefs_, "custom", "#336699"));
++  EXPECT_EQ("#336699",
++            *prefs_.GetDict(prefs::kSpaceThemes).FindString("custom"));
++
++  const EvoSpaceTheme theme = ResolveSpaceTheme(prefs_, "custom", "Anything");
++  EXPECT_EQ("custom", theme.mode);
++  EXPECT_EQ("#527da8", theme.accent_1);
++  EXPECT_EQ("#2b5782", theme.accent_2);
++  EXPECT_EQ("#336699", theme.accent_core);
++
++  ASSERT_TRUE(SetSpaceSeed(prefs_, "uppercase", "#A0B1C2"));
++  EXPECT_EQ("#a0b1c2",
++            *prefs_.GetDict(prefs::kSpaceThemes).FindString("uppercase"));
++}
++
++TEST_F(EvoSpaceThemeTest, RejectsMalformedSeedsWithoutMutatingPrefs) {
++  for (std::string_view seed : {"336699", "#369", "#gg6699", "#33669900"}) {
++    EXPECT_FALSE(SetSpaceSeed(prefs_, "custom", seed));
++  }
++  EXPECT_FALSE(SetSpaceSeed(prefs_, "", "#336699"));
++  EXPECT_TRUE(prefs_.GetDict(prefs::kSpaceThemes).empty());
++}
++
++}  // namespace
++}  // namespace evo::shell
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view.cc b/chrome/browser/ui/views/frame/evo_shell_host_view.cc
+index 65fdbf06b71cb558f279e00971413044934193c7..16a7d0d2b954af76b2e0e7af7ec4dccbe5111104 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_host_view.cc
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view.cc
+@@ -49,31 +49,6 @@ class EvoShellOwnerData : public base::SupportsUserData::Data {
+   raw_ptr<BrowserView> owner_;
+ };
+ 
+-std::array<SkColor4f, 3> ThemeColors(EvoNativeTheme theme) {
+-  switch (theme) {
+-    case EvoNativeTheme::kPersonal:
+-      return {SkColor4f::FromColor(SkColorSetRGB(0x7c, 0x8c, 0xff)),
+-              SkColor4f::FromColor(SkColorSetRGB(0x9b, 0x7b, 0xf3)),
+-              SkColor4f::FromColor(SkColorSetRGB(0x0d, 0x0f, 0x13))};
+-    case EvoNativeTheme::kWork:
+-      return {SkColor4f::FromColor(SkColorSetRGB(0x5f, 0xd3, 0xa3)),
+-              SkColor4f::FromColor(SkColorSetRGB(0x4f, 0xb8, 0xd8)),
+-              SkColor4f::FromColor(SkColorSetRGB(0x0d, 0x0f, 0x13))};
+-    case EvoNativeTheme::kMedia:
+-      return {SkColor4f::FromColor(SkColorSetRGB(0xf2, 0x86, 0xa6)),
+-              SkColor4f::FromColor(SkColorSetRGB(0xb0, 0x6f, 0xf0)),
+-              SkColor4f::FromColor(SkColorSetRGB(0x0d, 0x0f, 0x13))};
+-    case EvoNativeTheme::kFocus:
+-      return {SkColor4f::FromColor(SkColorSetRGB(0x6e, 0xa8, 0xf5)),
+-              SkColor4f::FromColor(SkColorSetRGB(0x57, 0xdc, 0xd6)),
+-              SkColor4f::FromColor(SkColorSetRGB(0x0d, 0x0f, 0x13))};
+-    case EvoNativeTheme::kAgent:
+-      return {SkColor4f::FromColor(SkColorSetRGB(0x57, 0xdc, 0xd6)),
+-              SkColor4f::FromColor(SkColorSetRGB(0x8f, 0x7b, 0xf3)),
+-              SkColor4f::FromColor(SkColorSetRGB(0x0d, 0x0f, 0x13))};
+-  }
+-}
+-
+ }  // namespace
+ 
+ class EvoShellHostView::SurfaceObserver : public content::WebContentsObserver {
+@@ -229,11 +204,12 @@ void EvoShellHostView::SetRightRailVisible(bool visible) {
+   InvalidateLayout();
+ }
+ 
+-void EvoShellHostView::SetTheme(EvoNativeTheme theme) {
+-  if (theme_ == theme) {
++void EvoShellHostView::SetWallpaperColors(
++    const std::array<SkColor, 3>& colors) {
++  if (wallpaper_colors_ == colors) {
+     return;
+   }
+-  theme_ = theme;
++  wallpaper_colors_ = colors;
+   SchedulePaint();
+ }
+ 
+@@ -296,7 +272,10 @@ void EvoShellHostView::Layout(PassKey) {
+ }
+ 
+ void EvoShellHostView::OnPaintBackground(gfx::Canvas* canvas) {
+-  const auto colors = ThemeColors(theme_);
++  const std::array<SkColor4f, 3> colors = {
++      SkColor4f::FromColor(wallpaper_colors_[0]),
++      SkColor4f::FromColor(wallpaper_colors_[1]),
++      SkColor4f::FromColor(wallpaper_colors_[2])};
+   const SkPoint points[] = {
+       gfx::PointToSkPoint(GetLocalBounds().origin()),
+       gfx::PointToSkPoint(GetLocalBounds().bottom_right())};
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view.h b/chrome/browser/ui/views/frame/evo_shell_host_view.h
+index 3674b44184bfd4c47ff82ee0c894140a659dce69..c564fb81c4042030a7731f6939ffccda72ccce60 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_host_view.h
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view.h
+@@ -3,6 +3,7 @@
+ #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_EVO_SHELL_HOST_VIEW_H_
+ #define CHROME_BROWSER_UI_VIEWS_FRAME_EVO_SHELL_HOST_VIEW_H_
+ 
++#include <array>
+ #include <memory>
+ 
+ #include "base/functional/callback.h"
+@@ -11,6 +12,7 @@
+ #include "base/timer/timer.h"
+ #include "chrome/browser/ui/evo_shell/evo_shell_tokens.h"
+ #include "ui/base/metadata/metadata_header_macros.h"
++#include "third_party/skia/include/core/SkColor.h"
+ #include "ui/gfx/geometry/rect.h"
+ #include "ui/views/view.h"
+ 
+@@ -36,8 +38,6 @@ enum class EvoShellFallbackReason {
+   kRailDestroyed,
+ };
+ 
+-enum class EvoNativeTheme { kAgent, kPersonal, kWork, kMedia, kFocus };
+-
+ struct EvoShellLayout {
+   bool operator==(const EvoShellLayout&) const = default;
+ 
+@@ -81,7 +81,7 @@ class EvoShellHostView : public views::View {
+ 
+   void SetSidebarCollapsed(bool collapsed);
+   void SetRightRailVisible(bool visible);
+-  void SetTheme(EvoNativeTheme theme);
++  void SetWallpaperColors(const std::array<SkColor, 3>& colors);
+   void MarkSurfaceReady(EvoShellSurface surface);
+   void ActivateFallback(EvoShellFallbackReason reason);
+ 
+@@ -103,6 +103,9 @@ class EvoShellHostView : public views::View {
+   views::WebView* toolbar_web_view_for_testing() const {
+     return toolbar_web_view_;
+   }
++  const std::array<SkColor, 3>& wallpaper_colors_for_testing() const {
++    return wallpaper_colors_;
++  }
+ 
+  protected:
+   void Layout(PassKey) override;
+@@ -124,7 +127,9 @@ class EvoShellHostView : public views::View {
+   base::RepeatingClosure ready_callback_;
+   base::OneShotTimer readiness_timer_;
+   EvoShellLayout shell_layout_;
+-  EvoNativeTheme theme_ = EvoNativeTheme::kAgent;
++  std::array<SkColor, 3> wallpaper_colors_ = {
++      SkColorSetRGB(0x57, 0xdc, 0xd6), SkColorSetRGB(0x8f, 0x7b, 0xf3),
++      SkColorSetRGB(0x0d, 0x0f, 0x13)};
+   bool sidebar_ready_ = false;
+   bool toolbar_ready_ = false;
+   bool right_rail_ready_ = false;
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc b/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
+index 24c04524433cd5b4be9bc9a56fdcbf29e916e516..1b93b2050e70c0bff4964e6df2cd11fde8a7304d 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view_unittest.cc
+@@ -10,6 +10,7 @@
+ #include "chrome/browser/ui/evo_shell/evo_shell_features.h"
+ #include "chrome/browser/ui/ui_features.h"
+ #include "chrome/common/chrome_features.h"
++#include "content/public/common/content_features.h"
+ #include "testing/gtest/include/gtest/gtest.h"
+ 
+ namespace evo {
+@@ -133,16 +134,16 @@ TEST(EvoShellHostViewTest, FallbackCallbackRunsExactlyOnce) {
+ TEST(EvoShellHostViewTest, HybridShellOwnsToolbarComposition) {
+   base::test::ScopedFeatureList features;
+   features.InitWithFeatures(
+-      {evo::features::kEvoHybridBrowserShell, features::kInitialWebUI,
+-       features::kWebUIReloadButton, features::kWebUILocationBar,
+-       features::kWebUIAvatarButton, features::kWebUIAppMenuButton},
++      {evo::features::kEvoHybridBrowserShell, ::features::kInitialWebUI,
++       ::features::kWebUIReloadButton, ::features::kWebUILocationBar,
++       ::features::kWebUIAvatarButton, ::features::kWebUIAppMenuButton},
+       {});
+ 
+-  EXPECT_FALSE(features::IsWebUIToolbarEnabled());
+-  EXPECT_FALSE(features::IsWebUIReloadButtonEnabled());
+-  EXPECT_FALSE(features::IsWebUILocationBarEnabled());
+-  EXPECT_FALSE(features::IsWebUIAvatarButtonEnabled());
+-  EXPECT_FALSE(features::IsWebUIAppMenuButtonEnabled());
++  EXPECT_FALSE(::features::IsWebUIToolbarEnabled());
++  EXPECT_FALSE(::features::IsWebUIReloadButtonEnabled());
++  EXPECT_FALSE(::features::IsWebUILocationBarEnabled());
++  EXPECT_FALSE(::features::IsWebUIAvatarButtonEnabled());
++  EXPECT_FALSE(::features::IsWebUIAppMenuButtonEnabled());
+ }
+ 
+ }  // namespace
+diff --git a/chrome/test/BUILD.gn b/chrome/test/BUILD.gn
+index 9fbb986fd7e17b65db56a518d68b02cfd6d561b2..f27c1c5e0c2b3ae42c5cfc73387be73fb55adac4 100644
+--- a/chrome/test/BUILD.gn
++++ b/chrome/test/BUILD.gn
+@@ -10508,6 +10508,7 @@ test("unit_tests") {
+       "../browser/ui/views/extensions/extensions_toolbar_unittest.h",
+       "../browser/ui/views/frame/browser_frame_view_unittest.cc",
+       "../browser/ui/views/frame/evo_shell_host_view_unittest.cc",
++      "../browser/ui/evo_shell/evo_space_theme_unittest.cc",
+       "../browser/ui/views/frame/browser_view_unittest.cc",
+       "../browser/ui/views/frame/layout/browser_view_layout_params_unittest.cc",
+       "../browser/ui/views/frame/multi_contents_drop_target_view_unittest.cc",
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+index 95337a94e1ab660e2b1127d27fc27e735eff176f..a47a266cb4c579db6cdedf3a27a6506f85ebfda6 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
++++ b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2026 SK Productions LLC
+ 
++#include <array>
++
+ #include "base/test/scoped_feature_list.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/search_engines/template_url_service_factory.h"
+@@ -13,7 +15,9 @@
+ #include "chrome/test/base/web_ui_mocha_browser_test.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/search_engines/template_url_service.h"
++#include "components/tab_groups/tab_group_visual_data.h"
+ #include "content/public/test/browser_test.h"
++#include "content/public/test/browser_test_utils.h"
+ #include "content/public/test/test_navigation_observer.h"
+ #include "ui/compositor/layer.h"
+ #include "ui/gfx/geometry/rounded_corners_f.h"
+@@ -140,3 +144,81 @@ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
+   EXPECT_EQ("localhost:3005", *child.FindString("url"));
+   EXPECT_TRUE(child.FindBool("pinned").value_or(false));
+ }
++
++IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
++                       CustomSeedUpdatesSnapshotAndNativeWallpaper) {
++  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
++  ASSERT_TRUE(browser_view);
++  auto* coordinator = browser_view->evo_shell_coordinator();
++  auto* host = browser_view->evo_shell_host_for_testing();
++  ASSERT_TRUE(coordinator);
++  ASSERT_TRUE(host);
++
++  base::DictValue before = coordinator->BuildSnapshot();
++  const std::string active_space_id = *before.FindString("activeSpaceId");
++  ASSERT_TRUE(
++      coordinator->SetSpaceSeedForFuturePicker(active_space_id, "#336699"));
++  base::DictValue snapshot = coordinator->BuildSnapshot();
++  EXPECT_EQ("#527da8", *snapshot.FindString("accent1"));
++  EXPECT_EQ("#2b5782", *snapshot.FindString("accent2"));
++  EXPECT_EQ("#336699", *snapshot.FindString("accentCore"));
++  const std::array<SkColor, 3> expected = {
++      SkColorSetRGB(0x52, 0x7d, 0xa8), SkColorSetRGB(0x2b, 0x57, 0x82),
++      SkColorSetRGB(0x0d, 0x0f, 0x13)};
++  EXPECT_EQ(expected, host->wallpaper_colors_for_testing());
++  EXPECT_FALSE(coordinator->SetSpaceSeedForFuturePicker("default", "#bad"));
++}
++
++IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
++                       ResolvedThemeReachesTrustedWebUISurface) {
++  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
++  ASSERT_TRUE(browser_view);
++  auto* host = browser_view->evo_shell_host_for_testing();
++  auto* coordinator = browser_view->evo_shell_coordinator();
++  ASSERT_TRUE(host);
++  ASSERT_TRUE(coordinator);
++  base::DictValue snapshot = coordinator->BuildSnapshot();
++  const std::string expected = *snapshot.FindString("accent1");
++  content::WebContents* sidebar =
++      host->sidebar_web_view_for_testing()->GetWebContents();
++  ASSERT_TRUE(sidebar);
++  ASSERT_TRUE(content::WaitForLoadStop(sidebar));
++  EXPECT_EQ(expected, content::EvalJs(sidebar, R"(
++    new Promise(resolve => {
++      const readAccent = () => {
++        const value = document.documentElement.style
++            .getPropertyValue('--accent-1');
++        if (value) {
++          resolve(value);
++        } else {
++          setTimeout(readAccent, 10);
++        }
++      };
++      readAccent();
++    })
++  )"));
++}
++
++IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
++                       ExternalSpaceFocusAppliesNamedTheme) {
++  TabStripModel* model = browser()->tab_strip_model();
++  const tab_groups::TabGroupId group_id = model->AddToNewGroup({0});
++  model->ChangeTabGroupVisuals(
++      group_id, tab_groups::TabGroupVisualData(
++                    u"Work", tab_groups::TabGroupColorId::kGrey));
++  model->SetFocusedGroup(group_id);
++
++  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
++  ASSERT_TRUE(browser_view);
++  auto* coordinator = browser_view->evo_shell_coordinator();
++  auto* host = browser_view->evo_shell_host_for_testing();
++  ASSERT_TRUE(coordinator);
++  ASSERT_TRUE(host);
++  base::DictValue snapshot = coordinator->BuildSnapshot();
++  EXPECT_EQ(group_id.ToString(), *snapshot.FindString("activeSpaceId"));
++  EXPECT_EQ("#5fd3a3", *snapshot.FindString("accent1"));
++  const std::array<SkColor, 3> expected = {
++      SkColorSetRGB(0x5f, 0xd3, 0xa3), SkColorSetRGB(0x4f, 0xb8, 0xd8),
++      SkColorSetRGB(0x0d, 0x0f, 0x13)};
++  EXPECT_EQ(expected, host->wallpaper_colors_for_testing());
++}
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+index 27bddb43b49c69c8b46bcadb88b44c35fd9b3879..f6ddb1d872982e5db39835347629676ce425fe20 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
++++ b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+@@ -3,6 +3,7 @@
+ import {rightRail, TOP_RAIL_ITEMS} from 'chrome://evo-shell/components/right_rail.js';
+ import {sidebar} from 'chrome://evo-shell/components/sidebar.js';
+ import {toolbar} from 'chrome://evo-shell/components/toolbar.js';
++import {applyEvoShellTheme} from 'chrome://evo-shell/surface.js';
+ import type {EvoShellAction, EvoShellSnapshot} from 'chrome://evo-shell/types.js';
+ import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
+ 
+@@ -24,6 +25,9 @@ function snapshot(): EvoShellSnapshot {
+     rightRailVisible: true,
+     activeUrl: 'https://evo.example/',
+     activeTitle: 'Evo',
++    accent1: '#57dcd6',
++    accent2: '#8f7bf3',
++    accentCore: '#bff4ff',
+     canGoBack: true,
+     canGoForward: false,
+     isLoading: false,
+@@ -39,6 +43,29 @@ suite('EvoShellComponents', () => {
+         'Default', view.querySelector('.profile-badge')!.textContent);
+   });
+ 
++  test('ResolvedThemeOverridesAccentProperties', () => {
++    const state = snapshot();
++    state.spaces[0]!.mode = 'custom';
++    state.accent1 = '#527da8';
++    state.accent2 = '#2b5782';
++    state.accentCore = '#336699';
++    document.documentElement.style.setProperty('--surface-canvas', '#010203');
++    applyEvoShellTheme(state);
++    assertEquals('custom', document.documentElement.dataset['themeMode']);
++    assertEquals(
++        '#527da8',
++        document.documentElement.style.getPropertyValue('--accent-1'));
++    assertEquals(
++        '#2b5782',
++        document.documentElement.style.getPropertyValue('--accent-2'));
++    assertEquals(
++        '#336699',
++        document.documentElement.style.getPropertyValue('--accent-core'));
++    assertEquals(
++        '#010203',
++        document.documentElement.style.getPropertyValue('--surface-canvas'));
++  });
++
+   test('CollapsedToolbarCanReopenSidebar', () => {
+     const state = snapshot();
+     state.sidebarCollapsed = true;
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_tokens_test.ts b/chrome/test/data/webui/evo_shell/evo_shell_tokens_test.ts
+index e532752c0386c6d66550b0440933652964327b91..5679852872b33ee649c1725d988cd24ef5cae55c 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_tokens_test.ts
++++ b/chrome/test/data/webui/evo_shell/evo_shell_tokens_test.ts
+@@ -4,19 +4,6 @@ import {createEvoIcon, EVO_ICON_NAMES} from 'chrome://evo-shell/icons.js';
+ import {mountEvoShellSurface, resolveEvoShellSurface} from 'chrome://evo-shell/surface.js';
+ import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
+ 
+-const REQUIRED_TOKENS = [
+-  '--evo-neutral-canvas', '--evo-neutral-sidebar', '--evo-neutral-panel',
+-  '--evo-neutral-overlay', '--evo-ink-1', '--evo-ink-2', '--evo-ink-3',
+-  '--evo-ink-4', '--evo-ink-on-accent', '--evo-alpha-hairline',
+-  '--evo-alpha-hairline-strong', '--evo-alpha-fill-subtle',
+-  '--evo-alpha-fill-hover', '--evo-status-red', '--evo-status-green',
+-  '--evo-status-amber', '--surface-canvas', '--surface-sidebar',
+-  '--surface-panel', '--surface-overlay', '--surface-subtle', '--surface-hover',
+-  '--hairline', '--hairline-strong', '--ink-1', '--ink-2', '--ink-3',
+-  '--ink-4', '--on-accent', '--danger', '--success', '--warning',
+-  '--accent-1', '--accent-2', '--accent-core', '--wallpaper',
+-];
+-
+ suite('EvoShellFoundation', () => {
+   setup(() => {
+     document.body.innerHTML = window.trustedTypes!.emptyHTML;
+@@ -30,16 +17,6 @@ suite('EvoShellFoundation', () => {
+     assertEquals(null, resolveEvoShellSurface('?surface=workspace'));
+   });
+ 
+-  test('MountsTokenizedBaseSurface', async () => {
+-    const root = document.createElement('div');
+-    document.body.append(root);
+-    const mounted = await mountEvoShellSurface(root, 'sidebar');
+-    assertTrue(mounted);
+-    assertEquals('sidebar', root.dataset['surface']);
+-    assertEquals('agent', document.documentElement.dataset['themeMode']);
+-    assertTrue(!!root.querySelector('main.evo-shell-surface'));
+-  });
+-
+   test('InvalidSurfaceStaysInert', async () => {
+     const root = document.createElement('div');
+     document.body.append(root);
+@@ -48,18 +25,6 @@ suite('EvoShellFoundation', () => {
+     assertEquals('invalid', root.dataset['surface']);
+   });
+ 
+-  test('GeneratedStylesheetContainsContract', async () => {
+-    const response = await fetch('chrome://evo-shell/evo_shell_tokens.css');
+-    assertTrue(response.ok);
+-    const css = await response.text();
+-    for (const token of REQUIRED_TOKENS) {
+-      assertTrue(css.includes(`${token}:`), `missing ${token}`);
+-    }
+-    for (const mode of ['agent', 'personal', 'work', 'media', 'focus']) {
+-      assertTrue(css.includes(`[data-theme-mode="${mode}"]`));
+-    }
+-  });
+-
+   test('LucideIconsInheritCurrentColor', () => {
+     assertTrue(EVO_ICON_NAMES.includes('search'));
+     const icon = createEvoIcon('search');

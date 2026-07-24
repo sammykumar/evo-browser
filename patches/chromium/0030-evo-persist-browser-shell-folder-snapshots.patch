@@ -1,0 +1,299 @@
+From d49cd3aee164e0eb5590f93e59a3ab1a6b8ecfaa Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Fri, 24 Jul 2026 05:39:26 -0500
+Subject: [PATCH 30/32] evo: persist browser shell folder snapshots
+
+---
+ .../ui/evo_shell/evo_shell_coordinator.cc     | 12 +---
+ .../browser/ui/evo_shell/evo_shell_prefs.cc   |  1 +
+ chrome/browser/ui/evo_shell/evo_shell_prefs.h |  1 +
+ .../browser/ui/evo_shell/evo_shell_types.cc   | 60 +++++++++++++++++++
+ chrome/browser/ui/evo_shell/evo_shell_types.h |  6 ++
+ .../webui/evo_shell/evo_shell_browsertest.cc  | 52 ++++++++++++++++
+ .../evo_shell/evo_shell_components_test.ts    | 32 +++++++++-
+ 7 files changed, 153 insertions(+), 11 deletions(-)
+
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+index 824d92fac1ee77383a1261690b272eb5f7462a33..5759f40f458c324a16f325ae898bf7d04fe40c86 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+@@ -7,7 +7,6 @@
+ #include <utility>
+ 
+ #include "base/functional/bind.h"
+-#include "base/strings/escape.h"
+ #include "base/strings/string_number_conversions.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/task/sequenced_task_runner.h"
+@@ -63,14 +62,6 @@ constexpr std::array<FavoriteDefinition, 12> kFavorites = {{
+ constexpr std::array<const char*, 5> kThemeModes = {"agent", "personal", "work",
+                                                     "media", "focus"};
+ 
+-std::string FaviconUrl(const GURL& page_url) {
+-  if (!page_url.is_valid()) {
+-    return "chrome://resources/images/icon_globe.svg";
+-  }
+-  return "chrome://favicon2/?size=32&scale_factor=2x&page_url=" +
+-         base::EscapeQueryParamValue(page_url.spec(), true);
+-}
+-
+ std::string TabId(tabs::TabInterface* tab) {
+   return base::NumberToString(tab->GetHandle().raw_value());
+ }
+@@ -152,6 +143,9 @@ base::DictValue EvoShellCoordinator::BuildSnapshot() const {
+          .favicon_url = FaviconUrl(GURL(favorite.url))});
+   }
+ 
++  snapshot.folders =
++      ParseFolderSnapshots(profile_->GetPrefs()->GetList(prefs::kFolders));
++
+   for (int index = 0; index < model->count(); ++index) {
+     tabs::TabInterface* tab = model->GetTabAtIndex(index);
+     if (tab->IsPinned()) {
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_prefs.cc b/chrome/browser/ui/evo_shell/evo_shell_prefs.cc
+index 039d1234d8f392bff0ed1aa18f9e3bcbf0fecf5b..0438d64afb7e4da91cd8945f892554b0ce77756a 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_prefs.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_prefs.cc
+@@ -9,6 +9,7 @@ namespace evo::shell::prefs {
+ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(kSidebarCollapsed, false);
+   registry->RegisterBooleanPref(kRightRailVisible, true);
++  registry->RegisterListPref(kFolders);
+ }
+ 
+ }  // namespace evo::shell::prefs
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_prefs.h b/chrome/browser/ui/evo_shell/evo_shell_prefs.h
+index 2dad7c33a953283690e1aab44cc42f3e2593a07d..1fc1072d243180b1ac4397fc1dd544a2342b846a 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_prefs.h
++++ b/chrome/browser/ui/evo_shell/evo_shell_prefs.h
+@@ -11,6 +11,7 @@ namespace evo::shell::prefs {
+ 
+ inline constexpr char kSidebarCollapsed[] = "evo.shell.sidebar_collapsed";
+ inline constexpr char kRightRailVisible[] = "evo.shell.right_rail_visible";
++inline constexpr char kFolders[] = "evo.shell.folders";
+ 
+ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+ 
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_types.cc b/chrome/browser/ui/evo_shell/evo_shell_types.cc
+index 9d578538fca5eff29f52b134d61ba6948e0f85f9..7392191cc1c454bf4da5038446959d27aad3df0b 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_types.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_types.cc
+@@ -2,8 +2,68 @@
+ 
+ #include "chrome/browser/ui/evo_shell/evo_shell_types.h"
+ 
++#include "base/strings/escape.h"
++#include "url/gurl.h"
++
+ namespace evo::shell {
+ 
++std::string FaviconUrl(const GURL& page_url) {
++  if (!page_url.is_valid()) {
++    return "chrome://resources/images/icon_globe.svg";
++  }
++  return "chrome://favicon2/?size=32&scale_factor=2x&page_url=" +
++         base::EscapeQueryParamValue(page_url.spec(), true);
++}
++
++std::vector<FolderSnapshot> ParseFolderSnapshots(
++    const base::ListValue& folder_values) {
++  std::vector<FolderSnapshot> folders;
++  for (const auto& folder_value : folder_values) {
++    const base::DictValue* folder = folder_value.GetIfDict();
++    if (!folder) {
++      continue;
++    }
++    const std::string* id = folder->FindString("id");
++    const std::string* title = folder->FindString("title");
++    const base::ListValue* children = folder->FindList("children");
++    if (!id || id->empty() || !title || title->empty() || !children) {
++      continue;
++    }
++
++    FolderSnapshot snapshot{.id = *id, .title = *title};
++    for (const auto& child_value : *children) {
++      const base::DictValue* child = child_value.GetIfDict();
++      if (!child) {
++        continue;
++      }
++      const std::string* child_id = child->FindString("id");
++      const std::string* child_title = child->FindString("title");
++      const std::string* child_url = child->FindString("url");
++      if (!child_id || child_id->empty() || !child_title ||
++          child_title->empty() || !child_url || child_url->empty()) {
++        continue;
++      }
++      const GURL url(*child_url);
++      if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
++        continue;
++      }
++      std::string display_url(url.host());
++      if (url.has_port()) {
++        display_url += ":";
++        display_url += url.port();
++      }
++      snapshot.children.push_back(
++          {.id = *child_id,
++           .title = *child_title,
++           .url = std::move(display_url),
++           .favicon_url = FaviconUrl(url),
++           .pinned = true});
++    }
++    folders.push_back(std::move(snapshot));
++  }
++  return folders;
++}
++
+ base::DictValue TabSnapshot::ToValue() const {
+   base::DictValue value;
+   value.Set("id", id);
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_types.h b/chrome/browser/ui/evo_shell/evo_shell_types.h
+index c53b8ca3481dc2149dd763b27044d7f8a745a232..49ec86d217909c0d4a1343a6dd020ef3e4ff44f8 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_types.h
++++ b/chrome/browser/ui/evo_shell/evo_shell_types.h
+@@ -8,6 +8,8 @@
+ 
+ #include "base/values.h"
+ 
++class GURL;
++
+ namespace evo::shell {
+ 
+ struct TabSnapshot {
+@@ -61,6 +63,10 @@ struct ShellSnapshot {
+   std::string active_rail_target = "ask-evo";
+ };
+ 
++std::string FaviconUrl(const GURL& page_url);
++std::vector<FolderSnapshot> ParseFolderSnapshots(
++    const base::ListValue& folder_values);
++
+ }  // namespace evo::shell
+ 
+ #endif  // CHROME_BROWSER_UI_EVO_SHELL_EVO_SHELL_TYPES_H_
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+index a664db0bb98e8663ed354f2372e275bda4a8ceae..95337a94e1ab660e2b1127d27fc27e735eff176f 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
++++ b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+@@ -1,14 +1,17 @@
+ // Copyright 2026 SK Productions LLC
+ 
+ #include "base/test/scoped_feature_list.h"
++#include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/search_engines/template_url_service_factory.h"
+ #include "chrome/browser/ui/evo_shell/evo_shell_coordinator.h"
+ #include "chrome/browser/ui/evo_shell/evo_shell_features.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_prefs.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
+ #include "chrome/common/webui_url_constants.h"
+ #include "chrome/test/base/search_test_utils.h"
+ #include "chrome/test/base/web_ui_mocha_browser_test.h"
++#include "components/prefs/pref_service.h"
+ #include "components/search_engines/template_url_service.h"
+ #include "content/public/test/browser_test.h"
+ #include "content/public/test/test_navigation_observer.h"
+@@ -88,3 +91,52 @@ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
+               gfx::RoundedCornersF(evo::shell::tokens::kSurfaceRadius));
+   }
+ }
++
++IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
++                       PersistedFoldersIgnoreMalformedEntries) {
++  base::ListValue children;
++  base::DictValue valid_child;
++  valid_child.Set("id", "local");
++  valid_child.Set("title", "[LOCAL] TanStack");
++  valid_child.Set("url", "http://localhost:3005/");
++  children.Append(std::move(valid_child));
++  base::DictValue child_without_url;
++  child_without_url.Set("id", "missing-url");
++  child_without_url.Set("title", "Missing URL");
++  children.Append(std::move(child_without_url));
++  base::DictValue child_with_invalid_url;
++  child_with_invalid_url.Set("id", "invalid-url");
++  child_with_invalid_url.Set("title", "Invalid URL");
++  child_with_invalid_url.Set("url", "not a URL");
++  children.Append(std::move(child_with_invalid_url));
++
++  base::ListValue folders;
++  base::DictValue valid_folder;
++  valid_folder.Set("id", "ai-tools");
++  valid_folder.Set("title", "AI IMAGE TOOLS");
++  valid_folder.Set("children", std::move(children));
++  folders.Append(std::move(valid_folder));
++  base::DictValue folder_without_title;
++  folder_without_title.Set("id", "missing-title");
++  folder_without_title.Set("children", base::ListValue());
++  folders.Append(std::move(folder_without_title));
++
++  browser()->profile()->GetPrefs()->SetList(evo::shell::prefs::kFolders,
++                                            std::move(folders));
++  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
++  ASSERT_TRUE(browser_view);
++  auto* coordinator = browser_view->evo_shell_coordinator();
++  ASSERT_TRUE(coordinator);
++  base::DictValue snapshot = coordinator->BuildSnapshot();
++  const base::ListValue* snapshot_folders = snapshot.FindList("folders");
++  ASSERT_TRUE(snapshot_folders);
++  ASSERT_EQ(1u, snapshot_folders->size());
++  const base::DictValue& folder = (*snapshot_folders)[0].GetDict();
++  EXPECT_EQ("ai-tools", *folder.FindString("id"));
++  const base::ListValue* snapshot_children = folder.FindList("children");
++  ASSERT_TRUE(snapshot_children);
++  ASSERT_EQ(1u, snapshot_children->size());
++  const base::DictValue& child = (*snapshot_children)[0].GetDict();
++  EXPECT_EQ("localhost:3005", *child.FindString("url"));
++  EXPECT_TRUE(child.FindBool("pinned").value_or(false));
++}
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+index c404ab7c527c5f55866193554b066edb7fb3b51f..27bddb43b49c69c8b46bcadb88b44c35fd9b3879 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
++++ b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+@@ -57,9 +57,9 @@ suite('EvoShellComponents', () => {
+ 
+   test('ToolbarFocusSelectsEntireAddress', () => {
+     const view = toolbar(snapshot(), () => {});
+-    document.body.append(view);
+     const input = view.querySelector('.toolbar-url-input') as HTMLInputElement;
+-    input.focus();
++    input.setSelectionRange(input.value.length, input.value.length);
++    input.dispatchEvent(new FocusEvent('focus'));
+     assertEquals(0, input.selectionStart);
+     assertEquals(input.value.length, input.selectionEnd);
+   });
+@@ -71,6 +71,34 @@ suite('EvoShellComponents', () => {
+     assertTrue(view.querySelector('.space-switcher-item.is-active') !== null);
+   });
+ 
++  test('RendersPersistedFolderSnapshotWithoutManagementControls', () => {
++    const state = snapshot();
++    state.folders = [{
++      id: 'ai-tools',
++      title: 'AI IMAGE TOOLS',
++      children: [
++        {
++          id: 'prod', title: '[PROD] TanStack', faviconUrl: 'prod.png',
++          active: false, loading: false, pinned: true,
++        },
++        {
++          id: 'local', title: '[LOCAL] TanStack', url: 'localhost:3005',
++          faviconUrl: 'local.png', active: false, loading: false, pinned: true,
++        },
++      ],
++    }];
++
++    const view = sidebar(state, () => {});
++    const folder = view.querySelector('.folder-row')!;
++    assertEquals(
++        'AI IMAGE TOOLS', folder.querySelector('.folder-header')!.textContent);
++    assertEquals(2, folder.querySelectorAll('.folder-children .tab-item').length);
++    assertEquals(
++        'localhost:3005',
++        folder.querySelector('.tab-item-subtitle')!.textContent);
++    assertEquals(0, folder.querySelectorAll('.folder-header button').length);
++  });
++
+   test('SidebarDispatchesLiveTabAndSpaceActions', () => {
+     const actions: EvoShellAction[] = [];
+     const view = sidebar(snapshot(), action => actions.push(action));

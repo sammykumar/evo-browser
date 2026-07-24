@@ -1,0 +1,163 @@
+From b03a25b3215e3628f6eeb064c5057c4df5e3587b Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Fri, 24 Jul 2026 05:30:31 -0500
+Subject: [PATCH 29/32] evo: use Chromium navigation semantics in shell toolbar
+
+---
+ .../resources/evo_shell/components/toolbar.ts |  1 +
+ .../ui/evo_shell/evo_shell_coordinator.cc     | 20 +++++----
+ .../webui/evo_shell/evo_shell_browsertest.cc  | 41 +++++++++++++++++++
+ .../evo_shell/evo_shell_components_test.ts    |  9 ++++
+ 4 files changed, 63 insertions(+), 8 deletions(-)
+
+diff --git a/chrome/browser/resources/evo_shell/components/toolbar.ts b/chrome/browser/resources/evo_shell/components/toolbar.ts
+index 24390a823ec9d77034e90276716e081b8ffb0334..c8537ed70e4c113074f9ab1b9a34311bebd20810 100644
+--- a/chrome/browser/resources/evo_shell/components/toolbar.ts
++++ b/chrome/browser/resources/evo_shell/components/toolbar.ts
+@@ -49,6 +49,7 @@ export function toolbar(
+   input.autocomplete = 'off';
+   input.spellcheck = false;
+   input.setAttribute('aria-label', 'Address and search');
++  input.addEventListener('focus', () => input.select());
+   urlForm.append(searchIcon, input);
+   urlForm.addEventListener('submit', event => {
+     event.preventDefault();
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+index 6a46fde4995e445ffc90195d8869d3c80d0c13d3..824d92fac1ee77383a1261690b272eb5f7462a33 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+@@ -11,6 +11,7 @@
+ #include "base/strings/string_number_conversions.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/task/sequenced_task_runner.h"
++#include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/browser.h"
+ #include "chrome/browser/ui/browser_commands.h"
+@@ -22,16 +23,18 @@
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
+ #include "chrome/common/webui_url_constants.h"
++#include "components/omnibox/browser/autocomplete_classifier.h"
++#include "components/omnibox/browser/autocomplete_match.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/tab_groups/tab_group_id.h"
+ #include "components/tabs/public/tab_group.h"
+-#include "components/url_formatter/url_fixer.h"
+ #include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/reload_type.h"
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/common/referrer.h"
+ #include "ui/base/page_transition_types.h"
+ #include "url/gurl.h"
++#include "third_party/metrics_proto/omnibox_event.pb.h"
+ 
+ namespace evo::shell {
+ namespace {
+@@ -233,13 +236,14 @@ base::DictValue EvoShellCoordinator::DispatchAction(
+     } else if (*type == "navigate") {
+       const std::string* value = action.FindString("url");
+       if (value && !value->empty()) {
+-        GURL target = url_formatter::FixupURL(*value);
+-        if (!target.is_valid()) {
+-          target = GURL("https://www.google.com/search?q=" +
+-                        base::EscapeQueryParamValue(*value, true));
+-        }
+-        if (target.is_valid()) {
+-          controller.LoadURL(target, content::Referrer(),
++        const std::u16string text = AutocompleteMatch::SanitizeString(
++            base::UTF8ToUTF16(*value));
++        AutocompleteMatch match;
++        AutocompleteClassifierFactory::GetForProfile(profile_)->Classify(
++            text, false, false, metrics::OmniboxEventProto::INVALID_SPEC,
++            &match, nullptr);
++        if (match.destination_url.is_valid()) {
++          controller.LoadURL(match.destination_url, content::Referrer(),
+                              ui::PAGE_TRANSITION_TYPED, std::string());
+         }
+       }
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+index a46ea68dd687eaed6e97d9525e411d9a72ff3087..a664db0bb98e8663ed354f2372e275bda4a8ceae 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
++++ b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+@@ -1,12 +1,17 @@
+ // Copyright 2026 SK Productions LLC
+ 
+ #include "base/test/scoped_feature_list.h"
++#include "chrome/browser/search_engines/template_url_service_factory.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_coordinator.h"
+ #include "chrome/browser/ui/evo_shell/evo_shell_features.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
+ #include "chrome/common/webui_url_constants.h"
++#include "chrome/test/base/search_test_utils.h"
+ #include "chrome/test/base/web_ui_mocha_browser_test.h"
++#include "components/search_engines/template_url_service.h"
+ #include "content/public/test/browser_test.h"
++#include "content/public/test/test_navigation_observer.h"
+ #include "ui/compositor/layer.h"
+ #include "ui/gfx/geometry/rounded_corners_f.h"
+ #include "ui/views/controls/webview/webview.h"
+@@ -29,6 +34,42 @@ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest, Components) {
+   RunTest("evo_shell/evo_shell_components_test.js", "mocha.run()");
+ }
+ 
++IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
++                       AddressQueryUsesDefaultSearchProvider) {
++  ASSERT_TRUE(embedded_test_server()->Start());
++  TemplateURLService* service =
++      TemplateURLServiceFactory::GetForProfile(browser()->profile());
++  search_test_utils::WaitForTemplateURLServiceToLoad(service);
++
++  TemplateURLData data;
++  data.SetShortName(u"Evo test search");
++  data.SetKeyword(data.short_name());
++  data.SetURL(embedded_test_server()
++                  ->GetURL("search.test", "/echo?q={searchTerms}")
++                  .spec());
++  TemplateURL* provider = service->Add(std::make_unique<TemplateURL>(data));
++  ASSERT_TRUE(provider);
++  service->SetUserSelectedDefaultSearchProvider(provider);
++  const GURL expected =
++      service->GenerateSearchURLForDefaultSearchProvider(u"evo browser query");
++
++  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
++  ASSERT_TRUE(browser_view);
++  auto* coordinator = browser_view->evo_shell_coordinator();
++  ASSERT_TRUE(coordinator);
++  content::WebContents* contents =
++      browser()->tab_strip_model()->GetActiveWebContents();
++  ASSERT_TRUE(contents);
++  content::TestNavigationObserver observer(contents);
++  base::DictValue action;
++  action.Set("type", "navigate");
++  action.Set("url", "evo browser query");
++  coordinator->DispatchAction(action);
++  observer.Wait();
++
++  EXPECT_EQ(expected, contents->GetLastCommittedURL());
++}
++
+ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
+                        NativeSurfacesClipToFigmaRadius) {
+   auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+index 2dbd8fa1c9cc4bde49061aed58bec7d089267f2d..c404ab7c527c5f55866193554b066edb7fb3b51f 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
++++ b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+@@ -55,6 +55,15 @@ suite('EvoShellComponents', () => {
+     }).collapsed);
+   });
+ 
++  test('ToolbarFocusSelectsEntireAddress', () => {
++    const view = toolbar(snapshot(), () => {});
++    document.body.append(view);
++    const input = view.querySelector('.toolbar-url-input') as HTMLInputElement;
++    input.focus();
++    assertEquals(0, input.selectionStart);
++    assertEquals(input.value.length, input.selectionEnd);
++  });
++
+   test('PinsSpaceSwitcherToSidebarBottom', () => {
+     const view = sidebar(snapshot(), () => {});
+     assertEquals('space-switcher', view.lastElementChild!.className);

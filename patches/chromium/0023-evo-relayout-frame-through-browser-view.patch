@@ -1,7 +1,7 @@
 From bd54a6beb6ed824cd73b1121c8ee44bec9ed202a Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Tue, 21 Jul 2026 04:10:56 -0500
-Subject: [PATCH 23/26] evo: relayout frame through browser view
+Subject: [PATCH 23/32] evo: relayout frame through browser view
 
 ---
  chrome/browser/ui/evo_shell/evo_shell_coordinator.cc | 5 ++---

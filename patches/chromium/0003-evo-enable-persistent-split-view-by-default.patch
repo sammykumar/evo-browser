@@ -1,7 +1,7 @@
 From 30df61ca730a04e26b515fa39b965b5d57bfafff Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 18 Jul 2026 15:59:09 -0500
-Subject: [PATCH 03/26] evo: enable persistent split view by default
+Subject: [PATCH 03/32] evo: enable persistent split view by default
 
 ---
  chrome/browser/ui/browser_ui_prefs.cc                |  2 +-
