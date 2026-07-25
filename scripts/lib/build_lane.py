@@ -483,6 +483,78 @@ def _remove_snapshot_worktree(
         )
 
 
+def _contains_workspace_dependency_link(directory: Path, workspace: Path) -> bool:
+    workspace = workspace.resolve()
+    for current, directory_names, file_names in os.walk(directory):
+        current_path = Path(current)
+        for name in directory_names + file_names:
+            candidate = current_path / name
+            if not candidate.is_symlink():
+                continue
+            try:
+                candidate.resolve().relative_to(workspace)
+                return True
+            except ValueError:
+                pass
+        directory_names[:] = [
+            name for name in directory_names if not (current_path / name).is_symlink()
+        ]
+    return False
+
+
+def _materialize_bun_cache(
+    source_cache: Path, destination_cache: Path, workspace: Path
+) -> None:
+    destination_cache.mkdir()
+    for source in source_cache.iterdir():
+        destination = destination_cache / source.name
+        if source.is_symlink():
+            destination.symlink_to(
+                os.readlink(source), target_is_directory=source.is_dir()
+            )
+        elif source.is_dir() and _contains_workspace_dependency_link(
+            source, workspace
+        ):
+            shutil.copytree(source, destination, symlinks=True)
+        else:
+            destination.symlink_to(
+                source.resolve(), target_is_directory=source.is_dir()
+            )
+
+
+def _materialize_snapshot_node_modules(repository: Path, snapshot: Path) -> None:
+    root_modules = repository / "node_modules"
+    if root_modules.is_dir() and not (snapshot / "node_modules").exists():
+        snapshot_modules = snapshot / "node_modules"
+        snapshot_modules.mkdir()
+        for source in root_modules.iterdir():
+            destination = snapshot_modules / source.name
+            if source.name == ".bun" and source.is_dir():
+                _materialize_bun_cache(
+                    source, destination, repository / "packages"
+                )
+            elif source.is_symlink():
+                destination.symlink_to(
+                    os.readlink(source), target_is_directory=source.is_dir()
+                )
+            elif source.is_dir():
+                shutil.copytree(source, destination, symlinks=True)
+            else:
+                shutil.copy2(source, destination)
+
+    for current, directory_names, _ in os.walk(repository):
+        current_path = Path(current)
+        if "node_modules" in directory_names:
+            directory_names.remove("node_modules")
+            source = current_path / "node_modules"
+            if current_path != repository:
+                destination = snapshot / source.relative_to(repository)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(source, destination, symlinks=True)
+        if ".git" in directory_names:
+            directory_names.remove(".git")
+
+
 @contextmanager
 def immutable_git_snapshot(
     repository: Path,
@@ -512,9 +584,7 @@ def immutable_git_snapshot(
         check=True,
         pass_fds=tuple(pass_fds),
     )
-    node_modules = repository / "node_modules"
-    if node_modules.is_dir() and not (snapshot / "node_modules").exists():
-        (snapshot / "node_modules").symlink_to(node_modules, target_is_directory=True)
+    _materialize_snapshot_node_modules(repository, snapshot)
     try:
         yield snapshot
     finally:

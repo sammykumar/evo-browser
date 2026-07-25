@@ -49,6 +49,109 @@ def create_repo(path: Path) -> tuple[str, str]:
 
 
 class BuildLaneTests(unittest.TestCase):
+    def test_immutable_snapshot_preserves_workspace_dependency_links(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            repository = base / "repository"
+            snapshot_parent = base / "snapshots"
+            repository.mkdir()
+            git(repository, "init", "-b", "main")
+            git(repository, "config", "user.email", "test@example.com")
+            git(repository, "config", "user.name", "Test User")
+
+            core = repository / "packages" / "core"
+            package = repository / "packages" / "opencode"
+            plugin = repository / "packages" / "plugin"
+            core.mkdir(parents=True)
+            package.mkdir(parents=True)
+            plugin.mkdir(parents=True)
+            (core / "index.ts").write_text(
+                "export const core = true\n", encoding="utf-8"
+            )
+            (package / "index.ts").write_text(
+                "export const app = true\n", encoding="utf-8"
+            )
+            (plugin / "index.ts").write_text(
+                "export const plugin = true\n", encoding="utf-8"
+            )
+            git(repository, "add", "packages")
+            git(repository, "commit", "-m", "workspace packages")
+            revision = git(repository, "rev-parse", "HEAD")
+
+            external = (
+                repository
+                / "node_modules"
+                / ".bun"
+                / "effect"
+                / "node_modules"
+                / "effect"
+            )
+            external.mkdir(parents=True)
+            (external / "index.d.ts").write_text("export {}\n", encoding="utf-8")
+            root_scope = repository / "node_modules" / "@opencode-ai"
+            root_scope.mkdir()
+            (root_scope / "plugin").symlink_to(
+                "../../packages/plugin", target_is_directory=True
+            )
+            transitive_scope = (
+                repository
+                / "node_modules"
+                / ".bun"
+                / "plugin-auth"
+                / "node_modules"
+                / "@opencode-ai"
+            )
+            transitive_scope.mkdir(parents=True)
+            (transitive_scope / "plugin").symlink_to(
+                "../../../../../packages/plugin", target_is_directory=True
+            )
+            package_modules = package / "node_modules"
+            package_modules.mkdir()
+            package_scope = package_modules / "@opencode-ai"
+            package_scope.mkdir()
+            (package_scope / "core").symlink_to(
+                "../../../core", target_is_directory=True
+            )
+            (package_modules / "effect").symlink_to(
+                "../../../node_modules/.bun/effect/node_modules/effect",
+                target_is_directory=True,
+            )
+
+            with build_lane.immutable_git_snapshot(
+                repository, revision, snapshot_parent, "component"
+            ) as snapshot:
+                snapshot_modules = (
+                    snapshot / "packages" / "opencode" / "node_modules"
+                )
+                self.assertEqual(
+                    (snapshot_modules / "@opencode-ai" / "core").resolve(),
+                    (snapshot / "packages" / "core").resolve(),
+                )
+                self.assertEqual(
+                    (snapshot_modules / "effect" / "index.d.ts").read_text(
+                        encoding="utf-8"
+                    ),
+                    "export {}\n",
+                )
+                self.assertEqual(
+                    (
+                        snapshot / "node_modules" / "@opencode-ai" / "plugin"
+                    ).resolve(),
+                    (snapshot / "packages" / "plugin").resolve(),
+                )
+                self.assertEqual(
+                    (
+                        snapshot
+                        / "node_modules"
+                        / ".bun"
+                        / "plugin-auth"
+                        / "node_modules"
+                        / "@opencode-ai"
+                        / "plugin"
+                    ).resolve(),
+                    (snapshot / "packages" / "plugin").resolve(),
+                )
+
     def test_verified_manifest_requires_release_only_lane(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
