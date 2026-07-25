@@ -67,16 +67,6 @@ def requested_revision(
     return _git(requesting_chromium, "rev-parse", "HEAD")
 
 
-def _pid_is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
 class BuildLock:
     """Machine-wide serialization backed by a kernel lock inherited by builds."""
 

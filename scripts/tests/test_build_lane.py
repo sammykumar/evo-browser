@@ -773,7 +773,7 @@ class BuildLaneTests(unittest.TestCase):
             self.assertEqual(manifest_path.read_bytes(), previous_manifest)
             self.assertEqual(list(manifest_path.parent.glob("*.tmp")), [])
 
-    def test_promotion_stages_signs_and_atomically_replaces_the_app(self) -> None:
+    def test_promotion_verifies_fingerprint_and_atomically_replaces_the_app(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
             out_dir = base / "out" / "Evo"
@@ -781,7 +781,6 @@ class BuildLaneTests(unittest.TestCase):
             source_contents = source_app / "Contents"
             source_contents.mkdir(parents=True)
             (source_contents / "payload.txt").write_text("new\n", encoding="utf-8")
-            (out_dir / "libfeature.dylib").write_text("library\n", encoding="utf-8")
             install_app = base / "Applications" / "Evo.app"
             (install_app / "Contents").mkdir(parents=True)
             (install_app / "Contents" / "payload.txt").write_text(
