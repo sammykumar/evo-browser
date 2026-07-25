@@ -1,7 +1,7 @@
 From b03a25b3215e3628f6eeb064c5057c4df5e3587b Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Fri, 24 Jul 2026 05:30:31 -0500
-Subject: [PATCH 29/37] evo: use Chromium navigation semantics in shell toolbar
+Subject: [PATCH 29/39] evo: use Chromium navigation semantics in shell toolbar
 
 ---
  .../resources/evo_shell/components/toolbar.ts |  1 +

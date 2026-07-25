@@ -1,7 +1,7 @@
 From 0deb4fab1816bd685827b9c6affb561c077d0848 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Mon, 20 Jul 2026 05:14:01 -0500
-Subject: [PATCH 18/37] evo: polish shell surfaces and toolbar
+Subject: [PATCH 18/39] evo: polish shell surfaces and toolbar
 
 ---
  .../browser/ui/evo_shell/evo_shell_tokens.h   |  7 +++

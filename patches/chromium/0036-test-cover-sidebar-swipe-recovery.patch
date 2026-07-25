@@ -1,7 +1,7 @@
 From e64f2f0735fa4d5cef2ba64d4e09ff106a0fbf72 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 25 Jul 2026 17:04:09 -0500
-Subject: [PATCH 36/37] test: cover sidebar swipe recovery
+Subject: [PATCH 36/39] test: cover sidebar swipe recovery
 
 ---
  .../webui/evo_shell/evo_shell_browsertest.cc     | 16 ++++++++++++++++

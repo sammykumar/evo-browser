@@ -1,0 +1,61 @@
+From 5790084fb0c897f484eff7b2df658c62c598d123 Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sat, 25 Jul 2026 17:24:09 -0500
+Subject: [PATCH 39/39] fix: recover Evo shell after readiness timeout
+
+---
+ chrome/browser/ui/views/frame/evo_shell_host_view.cc | 10 +++++++++-
+ chrome/browser/ui/views/frame/evo_shell_host_view.h  |  1 +
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view.cc b/chrome/browser/ui/views/frame/evo_shell_host_view.cc
+index 16a7d0d2b954af76b2e0e7af7ec4dccbe5111104..99a7d97036f37e710dde51afe1817d818e75eeb7 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_host_view.cc
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view.cc
+@@ -214,7 +214,7 @@ void EvoShellHostView::SetWallpaperColors(
+ }
+ 
+ void EvoShellHostView::MarkSurfaceReady(EvoShellSurface surface) {
+-  if (fallback_active_ || surfaces_ready_) {
++  if (surfaces_ready_ || (fallback_active_ && !fallback_recoverable_)) {
+     return;
+   }
+   if (surface == EvoShellSurface::kSidebar) {
+@@ -229,7 +229,10 @@ void EvoShellHostView::MarkSurfaceReady(EvoShellSurface surface) {
+   }
+ 
+   readiness_timer_.Stop();
++  fallback_active_ = false;
++  fallback_recoverable_ = false;
+   surfaces_ready_ = true;
++  SetVisible(true);
+   sidebar_web_view_->SetVisible(!sidebar_collapsed_);
+   toolbar_web_view_->SetVisible(true);
+   right_rail_web_view_->SetVisible(right_rail_visible_);
+@@ -238,9 +241,14 @@ void EvoShellHostView::MarkSurfaceReady(EvoShellSurface surface) {
+ 
+ void EvoShellHostView::ActivateFallback(EvoShellFallbackReason reason) {
+   if (fallback_active_) {
++    if (reason != EvoShellFallbackReason::kReadinessTimeout) {
++      fallback_recoverable_ = false;
++    }
+     return;
+   }
+   fallback_active_ = true;
++  fallback_recoverable_ =
++      reason == EvoShellFallbackReason::kReadinessTimeout;
+   surfaces_ready_ = false;
+   readiness_timer_.Stop();
+   if (sidebar_web_view_) {
+diff --git a/chrome/browser/ui/views/frame/evo_shell_host_view.h b/chrome/browser/ui/views/frame/evo_shell_host_view.h
+index c564fb81c4042030a7731f6939ffccda72ccce60..42126810529144ea0b1893bb2ccdf79d4803b4a5 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_host_view.h
++++ b/chrome/browser/ui/views/frame/evo_shell_host_view.h
+@@ -135,6 +135,7 @@ class EvoShellHostView : public views::View {
+   bool right_rail_ready_ = false;
+   bool surfaces_ready_ = false;
+   bool fallback_active_ = false;
++  bool fallback_recoverable_ = false;
+   bool sidebar_collapsed_ = false;
+   bool right_rail_visible_ = true;
+ };

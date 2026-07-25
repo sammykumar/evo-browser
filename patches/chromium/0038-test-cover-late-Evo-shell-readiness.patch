@@ -1,0 +1,38 @@
+From c9fb0671be95b2446d6f050ac99c007ab6fbeaee Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sat, 25 Jul 2026 17:22:32 -0500
+Subject: [PATCH 38/39] test: cover late Evo shell readiness
+
+---
+ .../webui/evo_shell/evo_shell_browsertest.cc   | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+index 6f5bb29274ad4f5667d120faa711bc5eda4c3df4..03241d74a594a32e214773fec383653b8fc305cd 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
++++ b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+@@ -247,6 +247,24 @@ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
+   )"));
+ }
+ 
++IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
++                       ReadinessTimeoutRecoversWhenSurfacesFinishLoading) {
++  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
++  ASSERT_TRUE(browser_view);
++  auto* host = browser_view->evo_shell_host_for_testing();
++  ASSERT_TRUE(host);
++
++  host->ActivateFallback(evo::EvoShellFallbackReason::kReadinessTimeout);
++  ASSERT_TRUE(host->fallback_active());
++  host->MarkSurfaceReady(evo::EvoShellSurface::kSidebar);
++  host->MarkSurfaceReady(evo::EvoShellSurface::kToolbar);
++  host->MarkSurfaceReady(evo::EvoShellSurface::kRightRail);
++
++  EXPECT_FALSE(host->fallback_active());
++  EXPECT_TRUE(host->surfaces_ready());
++  EXPECT_TRUE(host->GetVisible());
++}
++
+ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
+                        ExternalSpaceFocusAppliesNamedTheme) {
+   TabStripModel* model = browser()->tab_strip_model();
