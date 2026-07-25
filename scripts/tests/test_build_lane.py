@@ -1122,6 +1122,25 @@ class BuildLaneTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("requires --target unit_tests", result.stderr)
 
+    def test_chromium_interactive_filter_requires_interactive_target(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "test-chromium.sh"
+        result = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--target",
+                "browser_tests",
+                "--interactive-filter",
+                "Fake.*",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("requires --target interactive_ui_tests", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

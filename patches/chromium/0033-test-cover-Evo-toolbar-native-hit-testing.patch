@@ -1,0 +1,83 @@
+From 205d06109e4d5757498ebda5defd6c39a4907d4d Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sat, 25 Jul 2026 15:49:05 -0500
+Subject: [PATCH 33/35] test: cover Evo toolbar native hit testing
+
+---
+ .../frame/evo_shell_interactive_uitest.cc     | 54 +++++++++++++++++++
+ chrome/test/BUILD.gn                          |  1 +
+ 2 files changed, 55 insertions(+)
+ create mode 100644 chrome/browser/ui/views/frame/evo_shell_interactive_uitest.cc
+
+diff --git a/chrome/browser/ui/views/frame/evo_shell_interactive_uitest.cc b/chrome/browser/ui/views/frame/evo_shell_interactive_uitest.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..046d71060194489bef3ca24bdcbafc51a0eca0f6
+--- /dev/null
++++ b/chrome/browser/ui/views/frame/evo_shell_interactive_uitest.cc
+@@ -0,0 +1,54 @@
++// Copyright 2026 SK Productions LLC
++
++#include "base/run_loop.h"
++#include "base/test/run_until.h"
++#include "base/test/scoped_feature_list.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_features.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
++#include "chrome/test/base/in_process_browser_test.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/test/browser_test.h"
++#include "content/public/test/browser_test_utils.h"
++#include "ui/base/test/ui_controls.h"
++#include "ui/views/controls/webview/webview.h"
++#include "ui/views/widget/widget.h"
++
++class EvoShellInteractiveUiTest : public InProcessBrowserTest {
++ protected:
++  base::test::ScopedFeatureList scoped_feature_list_{
++      evo::features::kEvoHybridBrowserShell};
++};
++
++IN_PROC_BROWSER_TEST_F(EvoShellInteractiveUiTest,
++                       ToolbarSurfaceAcceptsMouseClicks) {
++  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
++  ASSERT_TRUE(browser_view);
++  auto* host = browser_view->evo_shell_host_for_testing();
++  ASSERT_TRUE(host);
++  ASSERT_TRUE(base::test::RunUntil([&] { return host->surfaces_ready(); }));
++  views::WebView* toolbar = host->toolbar_web_view_for_testing();
++  ASSERT_TRUE(toolbar);
++  content::WebContents* toolbar_contents = toolbar->GetWebContents();
++  ASSERT_TRUE(toolbar_contents);
++  ASSERT_TRUE(content::WaitForLoadStop(toolbar_contents));
++  ASSERT_TRUE(content::ExecJs(toolbar_contents,
++                              "document.activeElement.blur();"));
++  EXPECT_EQ("BODY", content::EvalJs(
++                        toolbar_contents, "document.activeElement.tagName"));
++
++  const gfx::Point toolbar_center = toolbar->GetBoundsInScreen().CenterPoint();
++  base::RunLoop move_loop;
++  ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(
++      toolbar_center.x(), toolbar_center.y(), move_loop.QuitClosure(),
++      browser_view->GetWidget()->GetNativeWindow()));
++  move_loop.Run();
++  base::RunLoop click_loop;
++  ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(
++      ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
++      click_loop.QuitClosure()));
++  click_loop.Run();
++
++  EXPECT_EQ("INPUT", content::EvalJs(
++                         toolbar_contents, "document.activeElement.tagName"));
++}
+diff --git a/chrome/test/BUILD.gn b/chrome/test/BUILD.gn
+index f27c1c5e0c2b3ae42c5cfc73387be73fb55adac4..262746fe5b71fdd541e51e6f2f0ec8a0ca60ab32 100644
+--- a/chrome/test/BUILD.gn
++++ b/chrome/test/BUILD.gn
+@@ -11320,6 +11320,7 @@ if (!is_android && !is_chromeos_device) {
+       "../browser/ui/views/extensions/extensions_menu_main_page_view_interactive_uitest.cc",
+       "../browser/ui/views/extensions/extensions_menu_site_permissions_page_view_interactive_uitest.cc",
+       "../browser/ui/views/extensions/extensions_menu_view_interactive_uitest.cc",
++      "../browser/ui/views/frame/evo_shell_interactive_uitest.cc",
+       "../browser/ui/views/media_router/media_router_dialog_controller_views_interactive_uitest.cc",
+       "../browser/ui/views/new_tab_footer/footer_interactive_uitest.cc",
+       "../browser/ui/views/optimization_guide/optimization_guide_icon_view_interactive_uitest.cc",

@@ -6,6 +6,7 @@ out_dir="${EVO_OUT_DIR:?EVO_OUT_DIR is required}"
 depot_tools_dir="${DEPOT_TOOLS_DIR:?DEPOT_TOOLS_DIR is required}"
 unit_filter=""
 browser_filter=""
+interactive_filter=""
 targets=()
 
 while (($#)); do
@@ -20,6 +21,10 @@ while (($#)); do
             ;;
         --browser-filter)
             browser_filter="$2"
+            shift 2
+            ;;
+        --interactive-filter)
+            interactive_filter="$2"
             shift 2
             ;;
         *)
@@ -47,6 +52,12 @@ for target in "${targets[@]}"; do
         browser_tests)
             if [[ -n "${browser_filter}" ]]; then
                 "${out_dir}/browser_tests" "--gtest_filter=${browser_filter}"
+            fi
+            ;;
+        interactive_ui_tests)
+            if [[ -n "${interactive_filter}" ]]; then
+                "${out_dir}/interactive_ui_tests" \
+                    "--gtest_filter=${interactive_filter}"
             fi
             ;;
     esac

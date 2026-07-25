@@ -1,7 +1,7 @@
 From 05a4cd8bbeb38a0e336256fec3ddaa5427144634 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Tue, 21 Jul 2026 06:55:18 -0500
-Subject: [PATCH 26/32] evo: invalidate Dev icon cache after packaging
+Subject: [PATCH 26/35] evo: invalidate Dev icon cache after packaging
 
 ---
  evo/build-dev.sh | 4 ++++

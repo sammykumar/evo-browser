@@ -1,0 +1,33 @@
+From 4adcded6bbaf7b574fd2ca6584277ef80fe00e6b Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sat, 25 Jul 2026 16:42:00 -0500
+Subject: [PATCH 35/35] test: stabilize Evo toolbar click setup
+
+---
+ .../browser/ui/views/frame/evo_shell_interactive_uitest.cc  | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/chrome/browser/ui/views/frame/evo_shell_interactive_uitest.cc b/chrome/browser/ui/views/frame/evo_shell_interactive_uitest.cc
+index 046d71060194489bef3ca24bdcbafc51a0eca0f6..b90dfd1c88a2e07e4799d627f00b3afcb02742c8 100644
+--- a/chrome/browser/ui/views/frame/evo_shell_interactive_uitest.cc
++++ b/chrome/browser/ui/views/frame/evo_shell_interactive_uitest.cc
+@@ -1,7 +1,6 @@
+ // Copyright 2026 SK Productions LLC
+ 
+ #include "base/run_loop.h"
+-#include "base/test/run_until.h"
+ #include "base/test/scoped_feature_list.h"
+ #include "chrome/browser/ui/evo_shell/evo_shell_features.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+@@ -26,7 +25,10 @@ IN_PROC_BROWSER_TEST_F(EvoShellInteractiveUiTest,
+   ASSERT_TRUE(browser_view);
+   auto* host = browser_view->evo_shell_host_for_testing();
+   ASSERT_TRUE(host);
+-  ASSERT_TRUE(base::test::RunUntil([&] { return host->surfaces_ready(); }));
++  host->MarkSurfaceReady(evo::EvoShellSurface::kSidebar);
++  host->MarkSurfaceReady(evo::EvoShellSurface::kToolbar);
++  host->MarkSurfaceReady(evo::EvoShellSurface::kRightRail);
++  ASSERT_TRUE(host->surfaces_ready());
+   views::WebView* toolbar = host->toolbar_web_view_for_testing();
+   ASSERT_TRUE(toolbar);
+   content::WebContents* toolbar_contents = toolbar->GetWebContents();

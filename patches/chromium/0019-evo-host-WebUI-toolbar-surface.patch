@@ -1,7 +1,7 @@
 From aa55e9e696a21ce21b7ff01e1ee06ce92a98265b Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Mon, 20 Jul 2026 17:21:06 -0500
-Subject: [PATCH 19/32] evo: host WebUI toolbar surface
+Subject: [PATCH 19/35] evo: host WebUI toolbar surface
 
 ---
  .../ui/views/frame/evo_shell_host_view.cc     | 42 +++++++++++++++++--

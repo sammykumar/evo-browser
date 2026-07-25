@@ -1,0 +1,31 @@
+From 307fef7cc34b6507e174e5ca7d2eb46d8c404ad5 Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sat, 25 Jul 2026 16:08:02 -0500
+Subject: [PATCH 34/35] fix: route Evo toolbar clicks to WebUI
+
+---
+ .../browser/ui/views/frame/browser_frame_view_mac.mm  | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/chrome/browser/ui/views/frame/browser_frame_view_mac.mm b/chrome/browser/ui/views/frame/browser_frame_view_mac.mm
+index 59094d7b3b79c716c20354a2410b5a72668d9e89..d751696a6d78d582f337ac032fdf2f771077f60f 100644
+--- a/chrome/browser/ui/views/frame/browser_frame_view_mac.mm
++++ b/chrome/browser/ui/views/frame/browser_frame_view_mac.mm
+@@ -375,6 +375,17 @@ gfx::Rect BrowserFrameViewMac::GetWindowBoundsForClientBounds(
+ }
+ 
+ int BrowserFrameViewMac::NonClientHitTest(const gfx::Point& point) {
++  if (base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell)) {
++    if (const auto* host = GetBrowserView()->evo_shell_host_for_testing();
++        host && host->surfaces_ready() && !host->fallback_active()) {
++      gfx::Point point_in_host(point);
++      views::View::ConvertPointToTarget(this, host, &point_in_host);
++      if (host->shell_layout().toolbar_bounds.Contains(point_in_host)) {
++        return HTCLIENT;
++      }
++    }
++  }
++
+   int super_component = BrowserFrameView::NonClientHitTest(point);
+   if (super_component != HTNOWHERE) {
+     return super_component;
