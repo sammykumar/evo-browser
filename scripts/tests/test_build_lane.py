@@ -13,6 +13,21 @@ from pathlib import Path
 from scripts.lib import build_lane
 
 
+_WORKSPACE_PATH_OVERRIDES = (
+    "EVO_CANONICAL_CHROMIUM_SRC",
+    "EVO_CHROMIUM_SRC",
+    "EVO_RUNTIME_DIR",
+    "EVO_OPENCODE_DIR",
+)
+
+
+def hermetic_workspace_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    for name in _WORKSPACE_PATH_OVERRIDES:
+        environment.pop(name, None)
+    return environment
+
+
 def git(path: Path, *args: str) -> str:
     return subprocess.check_output(
         ["git", "-C", str(path), *args], text=True
@@ -128,6 +143,7 @@ class BuildLaneTests(unittest.TestCase):
                     str(feature / "scripts" / "lib" / "workspace.sh"),
                 ],
                 text=True,
+                env=hermetic_workspace_environment(),
             )
 
             self.assertEqual(output, "enabled by default\n")
@@ -175,6 +191,7 @@ class BuildLaneTests(unittest.TestCase):
                     str(feature / "scripts" / "lib" / "workspace.sh"),
                 ],
                 text=True,
+                env=hermetic_workspace_environment(),
             ).splitlines()
 
             self.assertEqual(
