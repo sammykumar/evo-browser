@@ -3,6 +3,11 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/workspace.sh"
 
+python3 -m unittest discover \
+    -s "${workspace_root}/scripts/tests" \
+    -p 'test_*.py' \
+    -v
+
 "${workspace_root}/scripts/check-workspace.sh"
 
 if ! rg -q \

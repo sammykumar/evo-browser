@@ -40,3 +40,18 @@ Runtime and OpenCode are normal submodules. Chromium is reconstructed from a
 pinned upstream revision plus `patches/chromium`. This avoids storing a massive
 upstream checkout in the root Git repository while keeping every Evo-specific
 Chromium change reviewable and reproducible.
+
+## Build lane
+
+All root worktrees share the primary checkout's `evo-chromium/src/out/Evo`.
+The coordinator derives that checkout from Git's common directory, locks the
+machine-wide lane, detaches the primary Chromium checkout at the caller's
+committed revision, executes the build or test, and restores its original
+branch even after failure or interruption. Feature worktrees never own an
+`out/` directory.
+
+The cache identity is the pinned Xcode build plus the hash of `evo/args.gn`.
+Successful operations atomically update `evo-build-manifest.json` with exact
+Chromium/runtime revisions, completed targets and verification suites, bundle
+identity, signature status, and timestamp. Production promotion consumes this
+manifest and cannot invoke the compiler. See [build-lane.md](build-lane.md).

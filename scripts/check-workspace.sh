@@ -5,6 +5,15 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/workspace.sh"
 
 python3 -m json.tool "${manifest}" >/dev/null
 
+if [[ "$(manifest_value build.canonicalOutput)" != "out/Evo" ]]; then
+    echo "The supported Chromium build lane output must remain out/Evo." >&2
+    exit 1
+fi
+if [[ "$(manifest_value build.xcode.developerDir)" != "/Applications/Xcode.app/Contents/Developer" ]]; then
+    echo "workspace.json must pin the stable /Applications/Xcode.app toolchain." >&2
+    exit 1
+fi
+
 expected_patch_count="$(manifest_value chromium.patchCount)"
 actual_patch_count="$(find "${workspace_root}/patches/chromium" -maxdepth 1 -type f -name '*.patch' | wc -l | tr -d ' ')"
 if [[ "${actual_patch_count}" != "${expected_patch_count}" ]]; then

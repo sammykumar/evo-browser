@@ -10,6 +10,8 @@
 # Local reports and editor state.
 /artifacts/
 *.log
+__pycache__/
+*.pyc
 
 # Superpowers scratch (brainstorm mockups, subagent state).
 /.superpowers/

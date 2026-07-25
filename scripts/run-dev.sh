@@ -3,7 +3,13 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/workspace.sh"
 
-require_directory "${chromium_src}/evo" "Evo Chromium layer"
-EVO_RUNTIME_DIR="${runtime_dir}" \
-DEPOT_TOOLS_DIR="${depot_tools_dir}" \
-    "${chromium_src}/evo/run-dev.sh" "$@"
+"${workspace_root}/scripts/build-dev.sh"
+
+dev_app="${canonical_chromium_src}/out/EvoDev/Evo Dev.app"
+dev_profile_dir="${EVO_DEV_PROFILE_DIR:-${HOME}/Library/Application Support/Evo Chromium Dev}"
+open -n "${dev_app}" --args \
+    "--user-data-dir=${dev_profile_dir}" \
+    --enable-features=EvoHybridBrowserShell \
+    --use-mock-keychain \
+    --no-first-run \
+    "$@"

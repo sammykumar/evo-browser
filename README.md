@@ -36,13 +36,24 @@ then populated with `./scripts/apply-chromium-patches.sh`.
 ./scripts/test.sh
 ./scripts/build-dev.sh
 ./scripts/run-dev.sh
+./scripts/test-chromium.sh
 ```
+
+These commands use one serialized Chromium build lane rooted at the primary
+checkout's `evo-chromium/src/out/Evo`, even when invoked from a feature
+worktree. Chromium inputs must be committed before a build. See
+[docs/build-lane.md](docs/build-lane.md) for the cache, lock, and manifest
+contract.
 
 Codex and automated checks use only **Evo Dev**, its mock keychain, and the
 isolated `Evo Chromium Dev` profile. Sam tests the signed production app and
 keeps the production profile as the daily dogfooding environment.
 
+Production is intentionally two steps. Sam builds and verifies merged `main`,
+then promotes that exact artifact without compiling again:
+
 ```bash
+./scripts/build-release.sh
 ./scripts/install-production.sh
 open /Applications/Evo.app
 ```
