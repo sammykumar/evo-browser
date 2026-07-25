@@ -8,6 +8,29 @@ extension compatibility, and first-class local AI surfaces (Sidekick and Agent
 Workspace). The SwiftUI/WKWebView implementation is legacy and must not be
 revived in the active branch.
 
+## Design and UI workflow
+
+Evo's UI/UX is designed Figma-first, then handed to implementation as written
+epics. Do not design UI ad hoc in code — implement against the approved design,
+and if something is ambiguous or missing, ask rather than invent.
+
+- Design source of truth is the Evo Figma file `090VBHVLybK2LEZaOtKbcq`. It
+  holds the token system (Foundations page), every UI part as a component
+  (Components page, grouped Atoms → Molecules → Organisms), and assembled Screen
+  states.
+- Implementation specs live in `docs/design/`, one epic per surface, written as
+  epic → feature → user story with acceptance criteria and a component →
+  Figma node-ID map. Build against the epic and match Figma.
+- Foundations first: implement the design tokens (color, ink, per-space accent,
+  spacing, radius, type, elevation, Lucide icons) as the single source, then
+  build bottom-up (atoms → molecules → organisms → screens).
+- Every epic has an explicit "Placeholders and Deferred" section. Do not
+  implement those behaviors — leave clean extension points and stop at the
+  boundary.
+- Current epics: `docs/design/browser-shell-epic.md` (left sidebar, address bar,
+  right rail). Other surfaces (new-tab content, the command palette, the
+  AI/Sidekick panel) will land as their own epics.
+
 ## Repository boundaries
 
 - Root repository: orchestration, documentation, Chromium patches, and pinned

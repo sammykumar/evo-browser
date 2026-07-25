@@ -1,0 +1,243 @@
+From 84ff21a85467f0768fc6cb0bf8decaa4ea67f159 Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sun, 19 Jul 2026 16:20:15 -0500
+Subject: [PATCH 17/32] evo: add browser shell toolbar controls
+
+---
+ .../ui/evo_shell/evo_shell_coordinator.cc     | 20 ++++++++++--
+ .../ui/evo_shell/evo_shell_coordinator.h      |  2 ++
+ .../browser/ui/evo_shell/evo_shell_prefs.cc   |  1 +
+ chrome/browser/ui/evo_shell/evo_shell_prefs.h |  1 +
+ chrome/browser/ui/views/frame/browser_view.cc | 14 +++++++++
+ chrome/browser/ui/views/frame/browser_view.h  |  2 ++
+ .../browser/ui/views/toolbar/toolbar_view.cc  | 31 +++++++++++++++++++
+ .../browser/ui/views/toolbar/toolbar_view.h   |  5 +++
+ 8 files changed, 73 insertions(+), 3 deletions(-)
+
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+index bd27abdde1cb9c4589ef431bddb826f08a75e16d..192bca003583ceda0deddfbba7b2ee0b630bb9ba 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+@@ -91,6 +91,8 @@ EvoShellCoordinator::EvoShellCoordinator(Browser* browser,
+   browser_->tab_strip_model()->AddObserver(this);
+   host_->SetSidebarCollapsed(
+       profile_->GetPrefs()->GetBoolean(prefs::kSidebarCollapsed));
++  host_->SetRightRailVisible(
++      profile_->GetPrefs()->GetBoolean(prefs::kRightRailVisible));
+ }
+ 
+ EvoShellCoordinator::~EvoShellCoordinator() {
+@@ -196,9 +198,7 @@ base::DictValue EvoShellCoordinator::DispatchAction(
+   } else if (*type == "setSidebarCollapsed") {
+     const std::optional<bool> collapsed = action.FindBool("collapsed");
+     if (collapsed) {
+-      host_->SetSidebarCollapsed(*collapsed);
+-      profile_->GetPrefs()->SetBoolean(prefs::kSidebarCollapsed, *collapsed);
+-      BrowserView::GetBrowserViewForBrowser(browser_)->InvalidateLayout();
++      SetSidebarCollapsed(*collapsed);
+     }
+   } else if (*type == "selectRailTarget") {
+     const std::string* target = action.FindString("target");
+@@ -211,6 +211,20 @@ base::DictValue EvoShellCoordinator::DispatchAction(
+   return BuildSnapshot();
+ }
+ 
++void EvoShellCoordinator::SetSidebarCollapsed(bool collapsed) {
++  host_->SetSidebarCollapsed(collapsed);
++  profile_->GetPrefs()->SetBoolean(prefs::kSidebarCollapsed, collapsed);
++  BrowserView::GetBrowserViewForBrowser(browser_)->InvalidateLayout();
++  ScheduleSnapshotChanged();
++}
++
++void EvoShellCoordinator::SetRightRailVisible(bool visible) {
++  host_->SetRightRailVisible(visible);
++  profile_->GetPrefs()->SetBoolean(prefs::kRightRailVisible, visible);
++  BrowserView::GetBrowserViewForBrowser(browser_)->InvalidateLayout();
++  ScheduleSnapshotChanged();
++}
++
+ base::CallbackListSubscription EvoShellCoordinator::AddSnapshotChangedCallback(
+     base::RepeatingCallback<void(const base::DictValue&)> callback) {
+   return snapshot_callbacks_.Add(std::move(callback));
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.h b/chrome/browser/ui/evo_shell/evo_shell_coordinator.h
+index 4c22ff137f147328b8d628d9bcfab72887640e6a..551df366f8a500aea41c42f93a7f3eaeabde3615 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_coordinator.h
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.h
+@@ -31,6 +31,8 @@ class EvoShellCoordinator : public TabStripModelObserver {
+ 
+   base::DictValue BuildSnapshot() const;
+   base::DictValue DispatchAction(const base::DictValue& action);
++  void SetSidebarCollapsed(bool collapsed);
++  void SetRightRailVisible(bool visible);
+   base::CallbackListSubscription AddSnapshotChangedCallback(
+       base::RepeatingCallback<void(const base::DictValue&)> callback);
+ 
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_prefs.cc b/chrome/browser/ui/evo_shell/evo_shell_prefs.cc
+index c3b14d2465df4d583b311dd75618a4b0a3414a52..039d1234d8f392bff0ed1aa18f9e3bcbf0fecf5b 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_prefs.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_prefs.cc
+@@ -8,6 +8,7 @@ namespace evo::shell::prefs {
+ 
+ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(kSidebarCollapsed, false);
++  registry->RegisterBooleanPref(kRightRailVisible, true);
+ }
+ 
+ }  // namespace evo::shell::prefs
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_prefs.h b/chrome/browser/ui/evo_shell/evo_shell_prefs.h
+index bebf46de76aba892c7b447626fb4cd938580ef8f..2dad7c33a953283690e1aab44cc42f3e2593a07d 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_prefs.h
++++ b/chrome/browser/ui/evo_shell/evo_shell_prefs.h
+@@ -10,6 +10,7 @@ class PrefRegistrySyncable;
+ namespace evo::shell::prefs {
+ 
+ inline constexpr char kSidebarCollapsed[] = "evo.shell.sidebar_collapsed";
++inline constexpr char kRightRailVisible[] = "evo.shell.right_rail_visible";
+ 
+ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+ 
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index 52268c13aea02aa9c3fc319267d4d8837544a87c..e44de2566359eb231b409dece4a8d0f535b885e7 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -5609,6 +5609,20 @@ void BrowserView::OnEvoShellReady() {
+   InvalidateLayout();
+ }
+ 
++void BrowserView::ToggleEvoSidebar() {
++  if (evo_shell_host_ && evo_shell_coordinator_) {
++    evo_shell_coordinator_->SetSidebarCollapsed(
++        !evo_shell_host_->sidebar_collapsed());
++  }
++}
++
++void BrowserView::ToggleEvoRightRail() {
++  if (evo_shell_host_ && evo_shell_coordinator_) {
++    evo_shell_coordinator_->SetRightRailVisible(
++        !evo_shell_host_->right_rail_visible());
++  }
++}
++
+ void BrowserView::OnEvoShellFallback(evo::EvoShellFallbackReason reason) {
+   evo_shell_active_ = false;
+   if (evo_shell_host_) {
+diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
+index aa5c6e64422701d539b5694f95f30b2ec39cd8fb..fe30aa232f2309c9f490f00851a362ede4d1f057 100644
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -301,6 +301,8 @@ class BrowserView : public BrowserWindow,
+   evo::shell::EvoShellCoordinator* evo_shell_coordinator() const {
+     return evo_shell_coordinator_.get();
+   }
++  void ToggleEvoSidebar();
++  void ToggleEvoRightRail();
+ 
+   ProjectsPanelView* projects_panel_container_for_testing() const {
+     return projects_panel_container_;
+diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.cc b/chrome/browser/ui/views/toolbar/toolbar_view.cc
+index 9f1ad065ba766c0991bf34845ea597bcd33838a5..353008584089ca7b17fb8adde8361d81e30e8548 100644
+--- a/chrome/browser/ui/views/toolbar/toolbar_view.cc
++++ b/chrome/browser/ui/views/toolbar/toolbar_view.cc
+@@ -22,6 +22,7 @@
+ #include "base/trace_event/trace_event.h"
+ #include "build/build_config.h"
+ #include "chrome/app/chrome_command_ids.h"
++#include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/actor/ui/actor_ui_metrics.h"
+ #include "chrome/browser/actor/ui/task_list_bubble/actor_task_list_bubble_controller.h"
+ #include "chrome/browser/command_updater.h"
+@@ -50,6 +51,7 @@
+ #include "chrome/browser/ui/browser_window.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/evo_shell/evo_shell_features.h"
+ #include "chrome/browser/ui/global_error/global_error_service.h"
+ #include "chrome/browser/ui/global_error/global_error_service_factory.h"
+ #include "chrome/browser/ui/intent_picker_tab_helper.h"
+@@ -74,6 +76,7 @@
+ #include "chrome/browser/ui/views/extensions/extensions_toolbar_coordinator.h"
+ #include "chrome/browser/ui/views/extensions/extensions_toolbar_desktop.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/frame/evo_shell_host_view.h"
+ #include "chrome/browser/ui/views/frame/custom_corners_background.h"
+ #include "chrome/browser/ui/views/frame/top_container_view.h"
+ #include "chrome/browser/ui/views/glic/glic_button_interface.h"
+@@ -404,6 +407,13 @@ void ToolbarView::Init() {
+ #endif
+ 
+   // Always add children in order from left to right, for accessibility.
++  if (base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell)) {
++    evo_sidebar_toggle_ = AddChildView(std::make_unique<ToolbarButton>(
++        base::BindRepeating(&ToolbarView::OnEvoSidebarToggle,
++                            base::Unretained(this))));
++    evo_sidebar_toggle_->SetVectorIcon(kDockToRightIcon);
++    evo_sidebar_toggle_->SetTooltipText(u"Show sidebar");
++  }
+   if (!features::IsWebUIBackForwardButtonEnabled()) {
+     back_ = AddChildView(std::make_unique<BackForwardButton>(
+         BackForwardButton::Direction::kBack,
+@@ -463,6 +473,14 @@ void ToolbarView::Init() {
+     location_bar_ = toolbar_webview_->GetLocationBar();
+   }
+ 
++  if (base::FeatureList::IsEnabled(evo::features::kEvoHybridBrowserShell)) {
++    evo_right_rail_toggle_ = AddChildView(std::make_unique<ToolbarButton>(
++        base::BindRepeating(&ToolbarView::OnEvoRightRailToggle,
++                            base::Unretained(this))));
++    evo_right_rail_toggle_->SetVectorIcon(kDockToLeftIcon);
++    evo_right_rail_toggle_->SetTooltipText(u"Toggle tool rail");
++  }
++
+   bool is_glic_left_of_profile =
+       features::kGlicToolbarButtonLocationParam.Get() ==
+           features::GlicToolbarButtonLocation::kLeftOfProfileChip ||
+@@ -1615,6 +1633,11 @@ void ToolbarView::InitLayout() {
+ void ToolbarView::LayoutCommon() {
+   DCHECK(display_mode_ == DisplayMode::kNormal);
+ 
++  if (evo_sidebar_toggle_) {
++    auto* host = browser_view_->evo_shell_host_for_testing();
++    evo_sidebar_toggle_->SetVisible(host && host->sidebar_collapsed());
++  }
++
+   gfx::Insets interior_margin =
+       GetLayoutInsets(LayoutInset::TOOLBAR_INTERIOR_MARGIN);
+ 
+@@ -1676,6 +1699,14 @@ void ToolbarView::LayoutCommon() {
+   // Cast button visibility is controlled externally.
+ }
+ 
++void ToolbarView::OnEvoSidebarToggle(const ui::Event& event) {
++  browser_view_->ToggleEvoSidebar();
++}
++
++void ToolbarView::OnEvoRightRailToggle(const ui::Event& event) {
++  browser_view_->ToggleEvoRightRail();
++}
++
+ // AppMenuIconController::Delegate:
+ void ToolbarView::UpdateTypeAndSeverity(
+     AppMenuIconController::TypeAndSeverity type_and_severity) {
+diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.h b/chrome/browser/ui/views/toolbar/toolbar_view.h
+index ec0ca1d40c6089d22ddb8dd8f665e7911b3f1566..3c0e8c869233bece7895e29d246d6a920702b1a5 100644
+--- a/chrome/browser/ui/views/toolbar/toolbar_view.h
++++ b/chrome/browser/ui/views/toolbar/toolbar_view.h
+@@ -335,6 +335,9 @@ class ToolbarView : public views::AccessiblePaneView,
+ 
+   void OnTouchUiChanged();
+ 
++  void OnEvoSidebarToggle(const ui::Event& event);
++  void OnEvoRightRailToggle(const ui::Event& event);
++
+   void InitGlicContainer();
+ 
+   void OnVerticalTabStripModeChanged(
+@@ -376,6 +379,8 @@ class ToolbarView : public views::AccessiblePaneView,
+   // view hierarchy.
+   raw_ptr<ToolbarButton> back_ = nullptr;
+   raw_ptr<ToolbarButton> forward_ = nullptr;
++  raw_ptr<ToolbarButton> evo_sidebar_toggle_ = nullptr;
++  raw_ptr<ToolbarButton> evo_right_rail_toggle_ = nullptr;
+   raw_ptr<ReloadButton> reload_ = nullptr;
+   raw_ptr<WebUIToolbarWebView> toolbar_webview_ = nullptr;
+   std::unique_ptr<WebUIToolbarWebView> detached_toolbar_webview_;

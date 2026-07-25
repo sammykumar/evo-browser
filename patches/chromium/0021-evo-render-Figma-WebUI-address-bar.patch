@@ -1,0 +1,309 @@
+From 00e1941d4df693df0f82eb31c324ab34c09a5dfa Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Mon, 20 Jul 2026 17:21:46 -0500
+Subject: [PATCH 21/32] evo: render Figma WebUI address bar
+
+---
+ chrome/browser/resources/evo_shell/BUILD.gn   |  1 +
+ .../resources/evo_shell/components/toolbar.ts | 57 +++++++++++++
+ .../browser/resources/evo_shell/evo_shell.css | 85 +++++++++++++++++++
+ chrome/browser/resources/evo_shell/surface.ts | 14 ++-
+ chrome/browser/resources/evo_shell/types.ts   | 14 ++-
+ .../webui/evo_shell/evo_shell_browsertest.cc  |  1 +
+ .../evo_shell/evo_shell_components_test.ts    | 19 +++++
+ 7 files changed, 188 insertions(+), 3 deletions(-)
+ create mode 100644 chrome/browser/resources/evo_shell/components/toolbar.ts
+
+diff --git a/chrome/browser/resources/evo_shell/BUILD.gn b/chrome/browser/resources/evo_shell/BUILD.gn
+index baa319975fa9a57042e7fe359cea54ba4ad0dd95..a4aa17587cfd3721e6ae24cba46f1c5a0fdf9312 100644
+--- a/chrome/browser/resources/evo_shell/BUILD.gn
++++ b/chrome/browser/resources/evo_shell/BUILD.gn
+@@ -25,6 +25,7 @@ build_webui("build") {
+     "components/space_header.ts",
+     "components/space_switcher.ts",
+     "components/tab_item.ts",
++    "components/toolbar.ts",
+     "evo_icon.ts",
+     "evo_shell.ts",
+     "icons.ts",
+diff --git a/chrome/browser/resources/evo_shell/components/toolbar.ts b/chrome/browser/resources/evo_shell/components/toolbar.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..4f2e89fab959ee59b143044a880fe98b5799210c
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/toolbar.ts
+@@ -0,0 +1,57 @@
++// Copyright 2026 SK Productions LLC
++
++import {evoIcon} from '../evo_icon.js';
++import {iconButton} from './icon_button.js';
++import type {EvoShellAction, EvoShellSnapshot} from '../types.js';
++
++export function toolbar(
++    snapshot: EvoShellSnapshot,
++    dispatch: (action: EvoShellAction) => void): HTMLElement {
++  const surface = document.createElement('div');
++  surface.className = 'evo-toolbar';
++  surface.dataset['surface'] = 'toolbar';
++  surface.classList.toggle('sidebar-collapsed', snapshot.sidebarCollapsed);
++
++  const navigation = document.createElement('div');
++  navigation.className = 'toolbar-navigation';
++  const back = iconButton('chevron-left', 'Back', () => {
++    dispatch({type: 'navigateBack'});
++  });
++  back.disabled = !snapshot.canGoBack;
++  const forward = iconButton('chevron-right', 'Forward', () => {
++    dispatch({type: 'navigateForward'});
++  });
++  forward.disabled = !snapshot.canGoForward;
++  const reload = iconButton('rotate-cw', 'Reload', () => {
++    dispatch({type: 'reload'});
++  });
++  reload.classList.toggle('is-loading', snapshot.isLoading);
++  navigation.append(back, forward, reload);
++
++  const urlForm = document.createElement('form');
++  urlForm.className = 'toolbar-url-form';
++  const searchIcon = evoIcon('search');
++  searchIcon.classList.add('toolbar-url-icon');
++  const input = document.createElement('input');
++  input.className = 'toolbar-url-input';
++  input.type = 'text';
++  input.value = snapshot.activeUrl;
++  input.placeholder = 'Search or enter URL';
++  input.title = snapshot.activeTitle || snapshot.activeUrl;
++  input.autocomplete = 'off';
++  input.spellcheck = false;
++  input.setAttribute('aria-label', 'Address and search');
++  urlForm.append(searchIcon, input);
++  urlForm.addEventListener('submit', event => {
++    event.preventDefault();
++    dispatch({type: 'navigate', url: input.value.trim()});
++  });
++
++  const railToggle = iconButton('panel-right', 'Toggle right rail', () => {
++    dispatch({type: 'toggleRightRail'});
++  });
++  railToggle.classList.toggle('is-active', snapshot.rightRailVisible);
++
++  surface.append(navigation, urlForm, railToggle);
++  return surface;
++}
+diff --git a/chrome/browser/resources/evo_shell/evo_shell.css b/chrome/browser/resources/evo_shell/evo_shell.css
+index c2b7d9267f04a128a253433a4e392db8b2654d9d..f0929223120366e2494a76d8a7cf8f9effe46234 100644
+--- a/chrome/browser/resources/evo_shell/evo_shell.css
++++ b/chrome/browser/resources/evo_shell/evo_shell.css
+@@ -41,6 +41,91 @@ body {
+   background-color: var(--surface-panel);
+ }
+ 
++.evo-toolbar {
++  display: flex;
++  width: 100%;
++  height: 100%;
++  align-items: center;
++  gap: var(--space-sm);
++  padding: 0 var(--space-sm);
++  border: 1px solid var(--hairline);
++  border-radius: var(--radius-lg);
++  background: color-mix(in srgb, var(--surface-sidebar) 90%, transparent);
++  box-shadow: inset 0 1px var(--glass-top-highlight), var(--elevation-e1);
++}
++
++.evo-toolbar.sidebar-collapsed {
++  padding-left: 88px;
++}
++
++.toolbar-navigation {
++  display: flex;
++  flex: 0 0 auto;
++  gap: 2px;
++}
++
++.evo-toolbar .icon-button {
++  width: 28px;
++  height: 28px;
++}
++
++.evo-toolbar .icon-button:disabled {
++  cursor: default;
++  opacity: .35;
++}
++
++.evo-toolbar .icon-button.is-active {
++  color: var(--accent-core);
++  background: var(--surface-hover);
++}
++
++.toolbar-url-form {
++  display: flex;
++  min-width: 0;
++  height: 30px;
++  flex: 1 1 auto;
++  align-items: center;
++  gap: var(--space-sm);
++  padding: 0 10px;
++  border: 1px solid var(--hairline-strong);
++  border-radius: var(--radius-sm);
++  color: var(--ink-3);
++  background: var(--surface-subtle);
++}
++
++.toolbar-url-form:focus-within {
++  border-color: var(--accent-core);
++  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-core) 45%, transparent);
++}
++
++.toolbar-url-icon {
++  width: 14px;
++  height: 14px;
++  flex: 0 0 auto;
++}
++
++.toolbar-url-input {
++  width: 100%;
++  min-width: 0;
++  border: 0;
++  outline: 0;
++  color: var(--ink-1);
++  background: transparent;
++  font: inherit;
++}
++
++.toolbar-url-input::placeholder {
++  color: var(--ink-3);
++}
++
++.is-loading svg {
++  animation: evo-toolbar-spin 1s linear infinite;
++}
++
++@keyframes evo-toolbar-spin {
++  to { transform: rotate(360deg); }
++}
++
+ button {
+   color: inherit;
+   font: inherit;
+diff --git a/chrome/browser/resources/evo_shell/surface.ts b/chrome/browser/resources/evo_shell/surface.ts
+index 468ca503839b31a5dfae6cc33ae6c2bcc11d2275..7be0a0cf0a7390725525ac0c42628ae83e7cf2e4 100644
+--- a/chrome/browser/resources/evo_shell/surface.ts
++++ b/chrome/browser/resources/evo_shell/surface.ts
+@@ -1,15 +1,17 @@
+ // Copyright 2026 SK Productions LLC
+ 
+-export type EvoShellSurface = 'sidebar'|'rail';
++export type EvoShellSurface = 'sidebar'|'toolbar'|'rail';
+ 
+ import {evoShellBrowserProxy} from './browser_proxy.js';
+ import {sidebar} from './components/sidebar.js';
+ import {rightRail} from './components/right_rail.js';
++import {toolbar} from './components/toolbar.js';
+ import type {EvoShellAction, EvoShellSnapshot} from './types.js';
+ 
+ export function resolveEvoShellSurface(search: string): EvoShellSurface|null {
+   const value = new URLSearchParams(search).get('surface');
+-  return value === 'sidebar' || value === 'rail' ? value : null;
++  return value === 'sidebar' || value === 'toolbar' || value === 'rail' ?
++      value : null;
+ }
+ 
+ export async function mountEvoShellSurface(
+@@ -43,6 +45,14 @@ export async function mountEvoShellSurface(
+       return;
+     }
+ 
++    if (surface === 'toolbar') {
++      const dispatch = (action: EvoShellAction) => {
++        void evoShellBrowserProxy.dispatch(action).then(render);
++      };
++      root.replaceChildren(toolbar(snapshot, dispatch));
++      return;
++    }
++
+     const dispatch = (action: EvoShellAction) => {
+       void evoShellBrowserProxy.dispatch(action).then(render);
+     };
+diff --git a/chrome/browser/resources/evo_shell/types.ts b/chrome/browser/resources/evo_shell/types.ts
+index 8e4d61d864bde8057c9a9b503d6d1ce3a9b9c871..8d0b7079b434be91b4d07b1ed95742706a263aed 100644
+--- a/chrome/browser/resources/evo_shell/types.ts
++++ b/chrome/browser/resources/evo_shell/types.ts
+@@ -39,6 +39,12 @@ export interface EvoShellSnapshot {
+   folders: EvoShellFolder[];
+   openTabs: EvoShellTab[];
+   sidebarCollapsed: boolean;
++  rightRailVisible: boolean;
++  activeUrl: string;
++  activeTitle: string;
++  canGoBack: boolean;
++  canGoForward: boolean;
++  isLoading: boolean;
+   activeRailTarget: string;
+ }
+ 
+@@ -51,4 +57,10 @@ export type EvoSidebarAction =
+     {type: 'setSidebarCollapsed', collapsed: boolean};
+ 
+ export type EvoRailAction = {type: 'selectRailTarget', target: string};
+-export type EvoShellAction = EvoSidebarAction|EvoRailAction;
++export type EvoToolbarAction =
++    {type: 'navigateBack'}|
++    {type: 'navigateForward'}|
++    {type: 'reload'}|
++    {type: 'navigate', url: string}|
++    {type: 'toggleRightRail'};
++export type EvoShellAction = EvoSidebarAction|EvoRailAction|EvoToolbarAction;
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+index c3b06439805d12eac81bccf068b2f217e74fa254..a46ea68dd687eaed6e97d9525e411d9a72ff3087 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
++++ b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+@@ -38,6 +38,7 @@ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
+ 
+   for (views::WebView* surface :
+        {host->sidebar_web_view_for_testing(),
++        host->toolbar_web_view_for_testing(),
+         host->right_rail_web_view_for_testing()}) {
+     ASSERT_TRUE(surface);
+     ASSERT_TRUE(surface->layer());
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+index 5217052b470361d2afb7f2b1fc6da3634ad00b79..b40fadbb464516253c60ce55517e262ffbd1a1dc 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
++++ b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+@@ -2,6 +2,7 @@
+ 
+ import {rightRail, TOP_RAIL_ITEMS} from 'chrome://evo-shell/components/right_rail.js';
+ import {sidebar} from 'chrome://evo-shell/components/sidebar.js';
++import {toolbar} from 'chrome://evo-shell/components/toolbar.js';
+ import type {EvoShellAction, EvoShellSnapshot} from 'chrome://evo-shell/types.js';
+ import {assertEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
+ 
+@@ -20,6 +21,12 @@ function snapshot(): EvoShellSnapshot {
+       loading: false, pinned: false,
+     }],
+     sidebarCollapsed: false,
++    rightRailVisible: true,
++    activeUrl: 'https://evo.example/',
++    activeTitle: 'Evo',
++    canGoBack: true,
++    canGoForward: false,
++    isLoading: false,
+     activeRailTarget: 'ask-evo',
+   };
+ }
+@@ -49,4 +56,16 @@ suite('EvoShellComponents', () => {
+     (view.querySelector('[data-target="split"]') as HTMLButtonElement).click();
+     assertEquals('selectRailTarget', actions[0]!.type);
+   });
++
++  test('ToolbarDispatchesNavigationAndRailActions', () => {
++    const actions: EvoShellAction[] = [];
++    const view = toolbar(snapshot(), action => actions.push(action));
++    assertEquals(4, view.querySelectorAll('button').length);
++    (view.querySelector('.toolbar-navigation button') as HTMLButtonElement).click();
++    (view.querySelector('.toolbar-url-form') as HTMLFormElement).requestSubmit();
++    (view.querySelector('.evo-toolbar > button') as HTMLButtonElement).click();
++    assertEquals('navigateBack', actions[0]!.type);
++    assertEquals('navigate', actions[1]!.type);
++    assertEquals('toggleRightRail', actions[2]!.type);
++  });
+ });

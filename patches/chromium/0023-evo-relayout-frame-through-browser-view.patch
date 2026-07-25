@@ -1,0 +1,56 @@
+From bd54a6beb6ed824cd73b1121c8ee44bec9ed202a Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Tue, 21 Jul 2026 04:10:56 -0500
+Subject: [PATCH 23/32] evo: relayout frame through browser view
+
+---
+ chrome/browser/ui/evo_shell/evo_shell_coordinator.cc | 5 ++---
+ chrome/browser/ui/views/frame/browser_view.cc        | 5 +++++
+ chrome/browser/ui/views/frame/browser_view.h         | 2 ++
+ 3 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+index e5f9d170e030f29deef9080f7b75a71f76abd19e..6a46fde4995e445ffc90195d8869d3c80d0c13d3 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+@@ -253,9 +253,8 @@ base::DictValue EvoShellCoordinator::DispatchAction(
+ void EvoShellCoordinator::SetSidebarCollapsed(bool collapsed) {
+   host_->SetSidebarCollapsed(collapsed);
+   profile_->GetPrefs()->SetBoolean(prefs::kSidebarCollapsed, collapsed);
+-  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser_);
+-  browser_view->GetFrameView()->OnTabStripStateChanged();
+-  browser_view->InvalidateLayout();
++  BrowserView::GetBrowserViewForBrowser(browser_)
++      ->OnEvoShellSidebarCollapsedChanged();
+   ScheduleSnapshotChanged();
+ }
+ 
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index 67fa3a04e6a9cca3cdf33ccddfe911d66dca0c97..c597ce1992439998467c1789dac6d01e776d4512 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -5643,6 +5643,11 @@ void BrowserView::ToggleEvoRightRail() {
+   }
+ }
+ 
++void BrowserView::OnEvoShellSidebarCollapsedChanged() {
++  GetFrameView()->OnTabStripStateChanged();
++  InvalidateLayout();
++}
++
+ void BrowserView::OnEvoShellFallback(evo::EvoShellFallbackReason reason) {
+   evo_shell_active_ = false;
+   if (evo_shell_host_) {
+diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
+index c560f1e2dac6376c9f322896c4f28ed09d7e6591..213c76e4626b7bd2693f321e984977cf7877d21d 100644
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -303,6 +303,8 @@ class BrowserView : public BrowserWindow,
+   }
+   void ToggleEvoSidebar();
+   void ToggleEvoRightRail();
++  // Relayouts the frame after the Evo WebUI sidebar changes width.
++  void OnEvoShellSidebarCollapsedChanged();
+ 
+   ProjectsPanelView* projects_panel_container_for_testing() const {
+     return projects_panel_container_;

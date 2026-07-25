@@ -1,0 +1,54 @@
+From a95bd88c79bfdb3b766c178a79f8252da2b94686 Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Fri, 24 Jul 2026 05:23:56 -0500
+Subject: [PATCH 27/32] build: support Evo shell tests with Xcode 27
+
+---
+ buildtools/third_party/libc++/BUILD.gn | 5 ++++-
+ chrome/test/data/webui/BUILD.gn        | 1 +
+ sandbox/mac/seatbelt.cc                | 4 ++++
+ 3 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/buildtools/third_party/libc++/BUILD.gn b/buildtools/third_party/libc++/BUILD.gn
+index a5449666f765ee1bf68f144ed9f91d47479cae2e..780a0549d75d942ba49c13e87f25057607c4ef28 100644
+--- a/buildtools/third_party/libc++/BUILD.gn
++++ b/buildtools/third_party/libc++/BUILD.gn
+@@ -122,7 +122,10 @@ if (use_clang_modules && use_unified_system_module) {
+     }
+ 
+     DarwinFoundation1_module("_DarwinFoundation1") {
+-      public_deps = [ ":_AvailabilityInternal" ]
++      public_deps = [
++        ":_AvailabilityInternal",
++        ":_Builtin_float",
++      ]
+     }
+     DarwinFoundation1_module("_AvailabilityInternal") {
+     }
+diff --git a/chrome/test/data/webui/BUILD.gn b/chrome/test/data/webui/BUILD.gn
+index a7839c40e70b017a8c46ff1ff40dd29175443dfe..2a595d4e04b0011c920fcd0ea958354e5c5143d3 100644
+--- a/chrome/test/data/webui/BUILD.gn
++++ b/chrome/test/data/webui/BUILD.gn
+@@ -685,6 +685,7 @@ generate_grd("build_grd") {
+       "$target_gen_dir/downloads/resources.grdp",
+       "$target_gen_dir/drive_picker/resources.grdp",
+       "$target_gen_dir/engagement/resources.grdp",
++      "$target_gen_dir/evo_shell/resources.grdp",
+       "$target_gen_dir/feedback/resources.grdp",
+       "$target_gen_dir/glic/resources.grdp",
+       "$target_gen_dir/histograms/resources.grdp",
+diff --git a/sandbox/mac/seatbelt.cc b/sandbox/mac/seatbelt.cc
+index e9321ba5fc0f1b24b2d990ecb27c8aaa1c8b970b..364cee27e3fcf288d5580b8ff8e3bf5b6783dc27 100644
+--- a/sandbox/mac/seatbelt.cc
++++ b/sandbox/mac/seatbelt.cc
+@@ -13,6 +13,10 @@
+ extern "C" {
+ #include <sandbox.h>
+ 
++// The macOS 27 SDK no longer declares this legacy profile constant, although
++// libsystem_sandbox continues to export it for binary compatibility.
++extern const char kSBXProfilePureComputation[];
++
+ int sandbox_init_with_parameters(const char* profile,
+                                  uint64_t flags,
+                                  const char* const parameters[],

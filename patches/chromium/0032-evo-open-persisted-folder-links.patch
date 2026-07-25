@@ -1,0 +1,203 @@
+From d410270ed6df228eec1552264352e84565fdc3f4 Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Fri, 24 Jul 2026 06:39:09 -0500
+Subject: [PATCH 32/32] evo: open persisted folder links
+
+---
+ .../evo_shell/components/list_row.ts          |  7 ++--
+ .../resources/evo_shell/components/sidebar.ts |  6 +++-
+ chrome/browser/resources/evo_shell/types.ts   |  1 +
+ .../ui/evo_shell/evo_shell_coordinator.cc     | 19 +++++++++++
+ .../browser/ui/evo_shell/evo_shell_types.cc   |  1 +
+ chrome/browser/ui/evo_shell/evo_shell_types.h |  1 +
+ .../webui/evo_shell/evo_shell_browsertest.cc  | 32 +++++++++++++++++++
+ .../evo_shell/evo_shell_components_test.ts    | 11 ++++++-
+ 8 files changed, 74 insertions(+), 4 deletions(-)
+
+diff --git a/chrome/browser/resources/evo_shell/components/list_row.ts b/chrome/browser/resources/evo_shell/components/list_row.ts
+index 7dec48e00fb79fb5e02c69acbab327359dd075d0..fea3a60b4d7891b2a5bb359e0f14e59e96ca8de7 100644
+--- a/chrome/browser/resources/evo_shell/components/list_row.ts
++++ b/chrome/browser/resources/evo_shell/components/list_row.ts
+@@ -6,7 +6,8 @@ import type {EvoShellFolder} from '../types.js';
+ import type {TabItemCallbacks} from './tab_item.js';
+ 
+ export function folderRow(
+-    folder: EvoShellFolder, callbacks: TabItemCallbacks): HTMLDivElement {
++    folder: EvoShellFolder, callbacks: TabItemCallbacks,
++    openChild: (childId: string) => void): HTMLDivElement {
+   const container = document.createElement('div');
+   container.className = 'folder-row';
+   const header = document.createElement('div');
+@@ -20,7 +21,9 @@ export function folderRow(
+   const children = document.createElement('div');
+   children.className = 'folder-children';
+   for (const tab of folder.children) {
+-    children.append(tabItem({...tab, pinned: true}, callbacks));
++    children.append(tabItem(
++        {...tab, pinned: true},
++        {activate: openChild, close: callbacks.close}));
+   }
+   container.append(children);
+   return container;
+diff --git a/chrome/browser/resources/evo_shell/components/sidebar.ts b/chrome/browser/resources/evo_shell/components/sidebar.ts
+index 17acf3f883640c979649a2ee19f17c4091bbc49c..e3ddcced61296a4cbeb5d6638777d46fcae87149 100644
+--- a/chrome/browser/resources/evo_shell/components/sidebar.ts
++++ b/chrome/browser/resources/evo_shell/components/sidebar.ts
+@@ -44,7 +44,11 @@ export function sidebar(
+     body.append(tabItem(tab, callbacks));
+   }
+   for (const folder of snapshot.folders) {
+-    body.append(folderRow(folder, callbacks));
++    body.append(folderRow(
++        folder, callbacks,
++        childId => dispatch({
++          type: 'openFolderChild', folderId: folder.id, childId,
++        })));
+   }
+ 
+   const clearRow = document.createElement('button');
+diff --git a/chrome/browser/resources/evo_shell/types.ts b/chrome/browser/resources/evo_shell/types.ts
+index 5a1e56c90b764773e722629435d18730057f9991..5f095642328ad0cd0abc04cdd7d6e1a700923b79 100644
+--- a/chrome/browser/resources/evo_shell/types.ts
++++ b/chrome/browser/resources/evo_shell/types.ts
+@@ -56,6 +56,7 @@ export type EvoSidebarAction =
+     {type: 'closeTab', tabId: string}|
+     {type: 'newTab'}|
+     {type: 'openFavorite', favoriteId: string}|
++    {type: 'openFolderChild', folderId: string, childId: string}|
+     {type: 'selectSpace', spaceId: string}|
+     {type: 'setSidebarCollapsed', collapsed: boolean};
+ 
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+index eadfb946c6a5659586632d616a9aa180bc3dd6e4..81a9a9be26c3788fedd34a81ed665146cc33d57d 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_coordinator.cc
+@@ -197,6 +197,25 @@ base::DictValue EvoShellCoordinator::DispatchAction(
+         }
+       }
+     }
++  } else if (*type == "openFolderChild") {
++    const std::string* folder_id = action.FindString("folderId");
++    const std::string* child_id = action.FindString("childId");
++    if (folder_id && child_id) {
++      const auto folders =
++          ParseFolderSnapshots(profile_->GetPrefs()->GetList(prefs::kFolders));
++      for (const auto& folder : folders) {
++        if (folder.id != *folder_id) {
++          continue;
++        }
++        for (const auto& child : folder.children) {
++          if (child.id == *child_id) {
++            chrome::AddTabAt(browser_, GURL(child.navigation_url), -1, true);
++            break;
++          }
++        }
++        break;
++      }
++    }
+   } else if (*type == "selectSpace") {
+     const std::string* id = action.FindString("spaceId");
+     if (id) {
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_types.cc b/chrome/browser/ui/evo_shell/evo_shell_types.cc
+index e16db53e69a885a457af30d6440d7a100c9e2560..e09245b9cde767da54da6f2f52119730cbb1c6ed 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_types.cc
++++ b/chrome/browser/ui/evo_shell/evo_shell_types.cc
+@@ -56,6 +56,7 @@ std::vector<FolderSnapshot> ParseFolderSnapshots(
+           {.id = *child_id,
+            .title = *child_title,
+            .url = std::move(display_url),
++           .navigation_url = url.spec(),
+            .favicon_url = FaviconUrl(url),
+            .pinned = true});
+     }
+diff --git a/chrome/browser/ui/evo_shell/evo_shell_types.h b/chrome/browser/ui/evo_shell/evo_shell_types.h
+index 0dce3c9db95d6ac7f77003a59325a7761b8cdf86..d61bc98cc17762610e73f19850a722b27d8800f5 100644
+--- a/chrome/browser/ui/evo_shell/evo_shell_types.h
++++ b/chrome/browser/ui/evo_shell/evo_shell_types.h
+@@ -17,6 +17,7 @@ struct TabSnapshot {
+   std::string id;
+   std::string title;
+   std::string url;
++  std::string navigation_url;
+   std::string favicon_url;
+   bool active = false;
+   bool loading = false;
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+index a47a266cb4c579db6cdedf3a27a6506f85ebfda6..0d7599eeb4e7dc33483240ec0101c9700a65fe74 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
++++ b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+@@ -145,6 +145,38 @@ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
+   EXPECT_TRUE(child.FindBool("pinned").value_or(false));
+ }
+ 
++IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest, PersistedFolderChildOpensUrl) {
++  const GURL expected("https://example.test/folder-child");
++  base::ListValue children;
++  base::DictValue child;
++  child.Set("id", "reference");
++  child.Set("title", "Reference");
++  child.Set("url", expected.spec());
++  children.Append(std::move(child));
++  base::ListValue folders;
++  base::DictValue folder;
++  folder.Set("id", "resources");
++  folder.Set("title", "Resources");
++  folder.Set("children", std::move(children));
++  folders.Append(std::move(folder));
++  browser()->profile()->GetPrefs()->SetList(evo::shell::prefs::kFolders,
++                                            std::move(folders));
++
++  auto* coordinator =
++      BrowserView::GetBrowserViewForBrowser(browser())->evo_shell_coordinator();
++  ASSERT_TRUE(coordinator);
++  const int original_tab_count = browser()->tab_strip_model()->count();
++  base::DictValue action;
++  action.Set("type", "openFolderChild");
++  action.Set("folderId", "resources");
++  action.Set("childId", "reference");
++  coordinator->DispatchAction(action);
++
++  EXPECT_EQ(original_tab_count + 1, browser()->tab_strip_model()->count());
++  EXPECT_EQ(expected,
++            browser()->tab_strip_model()->GetActiveWebContents()->GetVisibleURL());
++}
++
+ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
+                        CustomSeedUpdatesSnapshotAndNativeWallpaper) {
+   auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+index f6ddb1d872982e5db39835347629676ce425fe20..ad2037448fff5d364e543a13e16c41633e562f1c 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
++++ b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+@@ -100,6 +100,7 @@ suite('EvoShellComponents', () => {
+ 
+   test('RendersPersistedFolderSnapshotWithoutManagementControls', () => {
+     const state = snapshot();
++    const actions: EvoShellAction[] = [];
+     state.folders = [{
+       id: 'ai-tools',
+       title: 'AI IMAGE TOOLS',
+@@ -115,7 +116,7 @@ suite('EvoShellComponents', () => {
+       ],
+     }];
+ 
+-    const view = sidebar(state, () => {});
++    const view = sidebar(state, action => actions.push(action));
+     const folder = view.querySelector('.folder-row')!;
+     assertEquals(
+         'AI IMAGE TOOLS', folder.querySelector('.folder-header')!.textContent);
+@@ -124,6 +125,14 @@ suite('EvoShellComponents', () => {
+         'localhost:3005',
+         folder.querySelector('.tab-item-subtitle')!.textContent);
+     assertEquals(0, folder.querySelectorAll('.folder-header button').length);
++    (folder.querySelectorAll('.tab-item-main')[1] as HTMLButtonElement).click();
++    assertEquals('openFolderChild', actions[0]!.type);
++    assertEquals('ai-tools', (actions[0] as {
++      type: 'openFolderChild', folderId: string, childId: string,
++    }).folderId);
++    assertEquals('local', (actions[0] as {
++      type: 'openFolderChild', folderId: string, childId: string,
++    }).childId);
+   });
+ 
+   test('SidebarDispatchesLiveTabAndSpaceActions', () => {

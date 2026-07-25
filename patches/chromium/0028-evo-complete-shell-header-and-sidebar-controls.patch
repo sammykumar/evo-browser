@@ -1,0 +1,182 @@
+From ea112285be111f46de33fa895982851a15b88edf Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Fri, 24 Jul 2026 05:24:11 -0500
+Subject: [PATCH 28/32] evo: complete shell header and sidebar controls
+
+---
+ .../resources/evo_shell/components/badge.ts   |  6 ++---
+ .../evo_shell/components/space_header.ts      | 11 +++++---
+ .../evo_shell/components/space_switcher.ts    |  2 +-
+ .../resources/evo_shell/components/toolbar.ts |  8 ++++++
+ .../browser/resources/evo_shell/evo_shell.css | 21 ++++++++++++---
+ .../evo_shell/evo_shell_components_test.ts    | 26 ++++++++++++++++++-
+ 6 files changed, 62 insertions(+), 12 deletions(-)
+
+diff --git a/chrome/browser/resources/evo_shell/components/badge.ts b/chrome/browser/resources/evo_shell/components/badge.ts
+index 09c06d497121a58438268849f8dc015229962b06..21f56f2c8875a78c2b6d592239a8df896706b164 100644
+--- a/chrome/browser/resources/evo_shell/components/badge.ts
++++ b/chrome/browser/resources/evo_shell/components/badge.ts
+@@ -1,9 +1,9 @@
+ // Copyright 2026 SK Productions LLC
+ 
+-export function badge(value: number): HTMLSpanElement {
++export function badge(label: string, ariaLabel?: string): HTMLSpanElement {
+   const element = document.createElement('span');
+   element.className = 'badge';
+-  element.textContent = String(value);
+-  element.setAttribute('aria-label', `${value} items`);
++  element.textContent = label;
++  element.setAttribute('aria-label', ariaLabel || label);
+   return element;
+ }
+diff --git a/chrome/browser/resources/evo_shell/components/space_header.ts b/chrome/browser/resources/evo_shell/components/space_header.ts
+index 2d9f1d28de03414c517cec5780986c50406238cb..e6bb2044d251b124c19481640dde2f40c90c6ffd 100644
+--- a/chrome/browser/resources/evo_shell/components/space_header.ts
++++ b/chrome/browser/resources/evo_shell/components/space_header.ts
+@@ -1,6 +1,7 @@
+ // Copyright 2026 SK Productions LLC
+ 
+ import {iconButton} from './icon_button.js';
++import {badge} from './badge.js';
+ import type {EvoShellSpace} from '../types.js';
+ 
+ export function spaceHeader(
+@@ -9,12 +10,14 @@ export function spaceHeader(
+   header.className = 'space-header';
+   const identity = document.createElement('div');
+   identity.className = 'space-identity';
+-  const orb = document.createElement('span');
+-  orb.className = 'agent-orb';
+-  orb.setAttribute('aria-hidden', 'true');
++  const avatar = document.createElement('span');
++  avatar.className = 'space-avatar';
++  avatar.setAttribute('aria-hidden', 'true');
+   const title = document.createElement('strong');
+   title.textContent = space?.name || 'Agent';
+-  identity.append(orb, title);
++  const profileBadge = badge('Default', 'Default profile');
++  profileBadge.classList.add('profile-badge');
++  identity.append(avatar, title, profileBadge);
+   header.append(identity, iconButton('panel-left', 'Collapse sidebar', onCollapse));
+   return header;
+ }
+diff --git a/chrome/browser/resources/evo_shell/components/space_switcher.ts b/chrome/browser/resources/evo_shell/components/space_switcher.ts
+index e5d52260250b2cbfb004139a53130aeacf1c5ab5..08488a7ada8b5961fbb319a8036e685adcc3f07b 100644
+--- a/chrome/browser/resources/evo_shell/components/space_switcher.ts
++++ b/chrome/browser/resources/evo_shell/components/space_switcher.ts
+@@ -21,7 +21,7 @@ export function spaceSwitcher(
+     dot.className = 'space-dot';
+     button.append(dot);
+     if (space.badge) {
+-      button.append(badge(space.badge));
++      button.append(badge(String(space.badge), `${space.badge} items`));
+     }
+     button.addEventListener('click', () => onSelect(space.id));
+     nav.append(button);
+diff --git a/chrome/browser/resources/evo_shell/components/toolbar.ts b/chrome/browser/resources/evo_shell/components/toolbar.ts
+index 4f2e89fab959ee59b143044a880fe98b5799210c..24390a823ec9d77034e90276716e081b8ffb0334 100644
+--- a/chrome/browser/resources/evo_shell/components/toolbar.ts
++++ b/chrome/browser/resources/evo_shell/components/toolbar.ts
+@@ -12,6 +12,14 @@ export function toolbar(
+   surface.dataset['surface'] = 'toolbar';
+   surface.classList.toggle('sidebar-collapsed', snapshot.sidebarCollapsed);
+ 
++  if (snapshot.sidebarCollapsed) {
++    const sidebarExpand = iconButton('panel-left', 'Expand sidebar', () => {
++      dispatch({type: 'setSidebarCollapsed', collapsed: false});
++    });
++    sidebarExpand.classList.add('sidebar-expand');
++    surface.append(sidebarExpand);
++  }
++
+   const navigation = document.createElement('div');
+   navigation.className = 'toolbar-navigation';
+   const back = iconButton('chevron-left', 'Back', () => {
+diff --git a/chrome/browser/resources/evo_shell/evo_shell.css b/chrome/browser/resources/evo_shell/evo_shell.css
+index f0929223120366e2494a76d8a7cf8f9effe46234..e63eb5133573f029410a921cf3687821ab29fd6d 100644
+--- a/chrome/browser/resources/evo_shell/evo_shell.css
++++ b/chrome/browser/resources/evo_shell/evo_shell.css
+@@ -167,14 +167,29 @@ button:focus-visible {
+   letter-spacing: var(--type-title-tracking);
+ }
+ 
+-.agent-orb {
++.space-avatar {
+   width: 18px;
+   height: 18px;
+   flex: 0 0 auto;
+   border: 1px solid rgba(255, 255, 255, .3);
+   border-radius: var(--radius-full);
+-  background: linear-gradient(135deg, #57dcd6, #8f7bf3);
+-  box-shadow: 0 0 14px rgba(87, 220, 214, .28);
++  background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
++  box-shadow: 0 0 14px color-mix(in srgb, var(--accent-1) 28%, transparent);
++}
++
++.profile-badge {
++  position: static;
++  min-width: 0;
++  height: 18px;
++  padding: 0 7px;
++  border: 1px solid var(--hairline);
++  border-radius: var(--radius-sm);
++  color: var(--ink-3);
++  background: var(--surface-subtle);
++  font-family: var(--type-label-family);
++  font-size: 9px;
++  font-weight: 500;
++  line-height: 16px;
+ }
+ 
+ .icon-button,
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+index b40fadbb464516253c60ce55517e262ffbd1a1dc..2dbd8fa1c9cc4bde49061aed58bec7d089267f2d 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
++++ b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+@@ -4,7 +4,7 @@ import {rightRail, TOP_RAIL_ITEMS} from 'chrome://evo-shell/components/right_rai
+ import {sidebar} from 'chrome://evo-shell/components/sidebar.js';
+ import {toolbar} from 'chrome://evo-shell/components/toolbar.js';
+ import type {EvoShellAction, EvoShellSnapshot} from 'chrome://evo-shell/types.js';
+-import {assertEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
++import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
+ 
+ function snapshot(): EvoShellSnapshot {
+   return {
+@@ -32,6 +32,29 @@ function snapshot(): EvoShellSnapshot {
+ }
+ 
+ suite('EvoShellComponents', () => {
++  test('SpaceHeaderUsesActiveAccentAndProfileBadge', () => {
++    const view = sidebar(snapshot(), () => {});
++    assertTrue(view.querySelector('.space-avatar') !== null);
++    assertEquals(
++        'Default', view.querySelector('.profile-badge')!.textContent);
++  });
++
++  test('CollapsedToolbarCanReopenSidebar', () => {
++    const state = snapshot();
++    state.sidebarCollapsed = true;
++    const actions: EvoShellAction[] = [];
++    const view = toolbar(state, action => actions.push(action));
++
++    const expand = view.querySelector('.sidebar-expand') as HTMLButtonElement;
++    assertTrue(expand !== null);
++    expand.click();
++    assertEquals('setSidebarCollapsed', actions[0]!.type);
++    assertFalse((actions[0] as {
++      type: 'setSidebarCollapsed',
++      collapsed: boolean,
++    }).collapsed);
++  });
++
+   test('PinsSpaceSwitcherToSidebarBottom', () => {
+     const view = sidebar(snapshot(), () => {});
+     assertEquals('space-switcher', view.lastElementChild!.className);
+@@ -60,6 +83,7 @@ suite('EvoShellComponents', () => {
+   test('ToolbarDispatchesNavigationAndRailActions', () => {
+     const actions: EvoShellAction[] = [];
+     const view = toolbar(snapshot(), action => actions.push(action));
++    document.body.append(view);
+     assertEquals(4, view.querySelectorAll('button').length);
+     (view.querySelector('.toolbar-navigation button') as HTMLButtonElement).click();
+     (view.querySelector('.toolbar-url-form') as HTMLFormElement).requestSubmit();
