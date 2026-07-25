@@ -1,7 +1,7 @@
 From f84836b7ab1c65cff4eafe5a418f5c2ae5f4879e Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sun, 19 Jul 2026 16:17:07 -0500
-Subject: [PATCH 16/34] evo: implement Figma sidebar and tool rail
+Subject: [PATCH 16/35] evo: implement Figma sidebar and tool rail
 
 ---
  chrome/browser/resources/evo_shell/BUILD.gn   |  15 +

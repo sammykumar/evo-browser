@@ -1,7 +1,7 @@
 From 2cd66b44efe637b55444e2ecd7a5a1fa1a1bccbb Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 18 Jul 2026 18:21:06 -0500
-Subject: [PATCH 09/34] Add page-aware Claude AI workspace
+Subject: [PATCH 09/35] Add page-aware Claude AI workspace
 
 ---
  chrome/browser/resources/evo_ai/BUILD.gn      |   2 +

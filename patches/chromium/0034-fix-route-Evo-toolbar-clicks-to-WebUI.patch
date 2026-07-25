@@ -1,7 +1,7 @@
 From 307fef7cc34b6507e174e5ca7d2eb46d8c404ad5 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 25 Jul 2026 16:08:02 -0500
-Subject: [PATCH 34/34] fix: route Evo toolbar clicks to WebUI
+Subject: [PATCH 34/35] fix: route Evo toolbar clicks to WebUI
 
 ---
  .../browser/ui/views/frame/browser_frame_view_mac.mm  | 11 +++++++++++
