@@ -30,36 +30,18 @@ def _run(args: argparse.Namespace) -> int:
         bundle_path=args.bundle_path,
         verified_for_production=args.verified_for_production,
         allow_cache_migration=args.allow_cache_migration,
+        require_release_root=args.require_release_root,
     )
 
 
 def _promote(args: argparse.Namespace) -> int:
     root = args.workspace_root.resolve()
-    build_lane.validate_release_root(root)
-    workspace = json.loads((root / "workspace.json").read_text(encoding="utf-8"))
     canonical_root = build_lane.discover_primary_checkout(root)
-    canonical_chromium = (
-        canonical_root / workspace["chromium"]["checkoutPath"]
-    ).resolve()
-    out_dir = (canonical_chromium / workspace["build"]["canonicalOutput"]).resolve()
-    manifest_path = out_dir / "evo-build-manifest.json"
-    identity = build_lane.expected_identity_from_workspace(
-        workspace, canonical_chromium
-    )
-    release = workspace["build"]["release"]
-
-    source_app = out_dir / "Evo.app"
     install_app = args.install_path.resolve()
-    running = subprocess.run(
-        ["pgrep", "-f", f"{install_app}/Contents/MacOS/Evo"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
+    preflight_workspace = json.loads(
+        (root / "workspace.json").read_text(encoding="utf-8")
     )
-    if running.returncode == 0:
-        raise build_lane.BuildLaneError(
-            "Quit the production Evo app before promoting a verified build."
-        )
+    preflight_target = preflight_workspace["chromium"]["evoRevision"]
 
     state_dir = Path(
         os.environ.get(
@@ -71,11 +53,37 @@ def _promote(args: argparse.Namespace) -> int:
         state_dir,
         {
             "requestingWorktree": str(root),
-            "targetCommit": identity["chromiumRevision"],
+            "targetCommit": preflight_target,
             "command": "install production",
             "startTime": build_lane.utc_timestamp(),
         },
     ):
+        build_lane.validate_release_root(root)
+        workspace = json.loads((root / "workspace.json").read_text(encoding="utf-8"))
+        canonical_chromium = (
+            canonical_root / workspace["chromium"]["checkoutPath"]
+        ).resolve()
+        out_dir = (canonical_chromium / workspace["build"]["canonicalOutput"]).resolve()
+        manifest_path = out_dir / "evo-build-manifest.json"
+        identity = build_lane.expected_identity_from_workspace(
+            workspace, canonical_chromium
+        )
+        release = workspace["build"]["release"]
+        source_app = out_dir / "Evo Release.app"
+
+        def require_production_stopped() -> None:
+            running = subprocess.run(
+                ["pgrep", "-f", f"{install_app}/Contents/MacOS/Evo"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if running.returncode == 0:
+                raise build_lane.BuildLaneError(
+                    "Quit the production Evo app before promoting a verified build."
+                )
+
+        require_production_stopped()
         if not manifest_path.is_file():
             raise build_lane.BuildLaneError(
                 "No verified shared artifact exists. "
@@ -89,16 +97,14 @@ def _promote(args: argparse.Namespace) -> int:
             required_suites=release["requiredVerificationSuites"],
         )
         build_lane.validate_production_bundle(manifest)
-        sign_script = canonical_chromium / "evo" / "sign.sh"
-
-        def signer(app: Path) -> None:
-            subprocess.run([str(sign_script), str(app)], check=True)
+        build_lane.validate_artifact_fingerprint(manifest, source_app)
+        expected_fingerprint = manifest["bundle"]["artifactSha256"]
 
         build_lane.promote_app(
             source_app,
-            out_dir,
             install_app,
-            signer=signer,
+            expected_fingerprint=expected_fingerprint,
+            pre_exchange_check=require_production_stopped,
         )
     print(f"Verified production app installed at {install_app}")
     return 0
@@ -106,6 +112,24 @@ def _promote(args: argparse.Namespace) -> int:
 
 def _validate_release_root(args: argparse.Namespace) -> int:
     build_lane.validate_release_root(args.workspace_root.resolve())
+    return 0
+
+
+def _package_release(args: argparse.Namespace) -> int:
+    if os.environ.get("EVO_BUILD_LANE_ACTIVE") != "1":
+        raise build_lane.BuildLaneError(
+            "Production packaging must run inside the shared build lane."
+        )
+
+    def signer(app: Path) -> None:
+        subprocess.run([str(args.sign_script), str(app)], check=True)
+
+    build_lane.package_release_artifact(
+        args.source_app.resolve(),
+        args.out_dir.resolve(),
+        args.destination_app.resolve(),
+        signer=signer,
+    )
     return 0
 
 
@@ -123,6 +147,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--bundle-path", type=Path)
     run.add_argument("--verified-for-production", action="store_true")
     run.add_argument("--allow-cache-migration", action="store_true")
+    run.add_argument("--require-release-root", action="store_true")
     run.add_argument("command", nargs=argparse.REMAINDER)
     run.set_defaults(handler=_run)
 
@@ -131,6 +156,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     release_root.add_argument("--workspace-root", type=Path, required=True)
     release_root.set_defaults(handler=_validate_release_root)
+
+    package = subparsers.add_parser(
+        "package-release", help="assemble the complete signed release bundle"
+    )
+    package.add_argument("--source-app", type=Path, required=True)
+    package.add_argument("--out-dir", type=Path, required=True)
+    package.add_argument("--destination-app", type=Path, required=True)
+    package.add_argument("--sign-script", type=Path, required=True)
+    package.set_defaults(handler=_package_release)
 
     promote = subparsers.add_parser(
         "promote", help="install an already verified production artifact"

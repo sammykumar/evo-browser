@@ -50,8 +50,9 @@ committed revision, executes the build or test, and restores its original
 branch even after failure or interruption. Feature worktrees never own an
 `out/` directory.
 
-The cache identity is the pinned Xcode build plus the hash of `evo/args.gn`.
+The cache identity is the pinned Xcode path/build plus the hash of `evo/args.gn`.
 Successful operations atomically update `evo-build-manifest.json` with exact
-Chromium/runtime revisions, completed targets and verification suites, bundle
-identity, signature status, and timestamp. Production promotion consumes this
-manifest and cannot invoke the compiler. See [build-lane.md](build-lane.md).
+Chromium/runtime revisions, completed targets and verification suites, and a
+fingerprint of the complete signed release bundle. Production promotion
+revalidates that fingerprint and uses a macOS atomic exchange without invoking
+the compiler or a mutable signing script. See [build-lane.md](build-lane.md).

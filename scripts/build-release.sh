@@ -33,7 +33,8 @@ python3 "${workspace_root}/scripts/evo-build-lane.py" run \
     --record-suite 'browser:EvoShellUIBrowserTest.*' \
     --record-suite 'codesign:strict' \
     --verified-for-production \
-    --bundle-path "${canonical_out_dir}/Evo.app" \
+    --require-release-root \
+    --bundle-path "${canonical_out_dir}/Evo Release.app" \
     -- "${workspace_root}/scripts/lib/build-release-operation.sh" "${workspace_root}"
 
-echo "Verified production artifact: ${canonical_out_dir}/Evo.app"
+echo "Verified production artifact: ${canonical_out_dir}/Evo Release.app"

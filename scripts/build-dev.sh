@@ -2,6 +2,7 @@
 
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/workspace.sh"
+require_safe_dev_paths
 
 require_git_repository "${chromium_src}" "Requesting Chromium worktree"
 require_directory "${canonical_chromium_src}/evo" "Canonical Evo Chromium layer"

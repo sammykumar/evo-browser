@@ -13,12 +13,15 @@ directories.
 3. Run focused Chromium verification through `./scripts/test-chromium.sh`.
 
 The coordinator finds the primary checkout through the root Git common
-directory. It acquires the lock at
-`~/Library/Application Support/Evo Build/lock`, temporarily detaches the
+directory. It acquires a kernel-backed lock at
+`~/Library/Application Support/Evo Build/lane.lock`, temporarily detaches the
 primary Chromium checkout at the requested commit, and always restores the
-previous branch/revision. A waiting caller prints the active PID, request, and
-operation status every 30 seconds. A stale lock is reclaimed only after its
-recorded process no longer exists.
+previous branch/revision. Build children inherit the lock, so a terminated
+coordinator cannot release the lane while Ninja is still active. Checkout state
+is journaled before detaching and recovered by the next owner after a crash.
+A waiting caller prints the active PID, request, target, start time, and phase
+every 30 seconds. Runtime inputs are built from an immutable temporary worktree;
+release verification does the same for OpenCode.
 
 The default focused suite is:
 
@@ -60,11 +63,13 @@ atomically. It records:
 - exact Chromium and runtime revisions;
 - GN-arguments hash and Xcode path/version/build;
 - completed build targets and verification suites;
-- bundle identifier, version, signature result, and timestamp;
+- bundle identifier, version, signature result, complete artifact SHA-256, and timestamp;
 - whether the artifact is verified for production.
 
 A failed or interrupted operation leaves the previous known-good manifest
-unchanged. Verification is never carried across a changed cache identity.
+unchanged. Promotion independently re-hashes the current app, so an old manifest
+cannot authorize files changed by a failed build. Verification is never carried
+across a changed cache identity or artifact fingerprint.
 
 ## Production
 
@@ -79,9 +84,10 @@ The release command requires a clean local `main` exactly synchronized with
 `origin/main`, validates workspace pins, builds the pinned revisions, runs the
 workspace and focused Chromium suites, and records strict code-signing proof.
 
-The install command never runs Ninja. It rejects missing, stale, mismatched, or
-unverified artifacts; stages and signs a temporary bundle; verifies it; and
-then atomically replaces `/Applications/Evo.app`. It does not launch Evo or
+The install command never runs Ninja or signs from mutable source. It rejects
+missing, stale, mismatched, or unverified artifacts; stages the exact signed
+release bundle; verifies its fingerprint and signature; and then uses a single
+macOS atomic exchange to replace `/Applications/Evo.app`. It does not launch Evo or
 read, reset, migrate, or modify the production profile.
 
 ## Diagnostics and cleanup
@@ -89,11 +95,12 @@ read, reset, migrate, or modify the production profile.
 The current lock owner is readable at:
 
 ```bash
-cat "$HOME/Library/Application Support/Evo Build/lock/owner.json"
+cat "$HOME/Library/Application Support/Evo Build/owner.json"
 ```
 
-Do not manually delete a live lock. If its PID is gone, the next supported
-command reclaims it. Raw Chromium commands remain available for exceptional
+Do not manipulate the lock file. The kernel releases it only after the
+coordinator and every inherited build child exit; stale owner metadata is
+replaced by the next owner. Raw Chromium commands remain available for exceptional
 diagnosis, but they are outside Evo's supported workflow and must not target a
 feature worktree's `out/` directory.
 
@@ -104,7 +111,7 @@ Measured on the initial Xcode 26.6 migration on July 25, 2026:
 | Operation | Result | Wall time |
 |---|---:|---:|
 | Stable-Xcode migration and warm-up | 22,396 actions | 2h 16m 49.7s |
-| Immediate no-op Dev build/package | 0 compile actions | 23.9s |
+| Hardened no-op Dev build/package | 0 compile actions | 28.3s |
 | One-file Evo feature commit | 3 actions | 26.3s |
 | Feature commit back to pinned main | 3 actions | 25.0s |
 

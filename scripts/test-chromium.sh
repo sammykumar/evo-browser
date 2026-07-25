@@ -28,9 +28,32 @@ while (($#)); do
 done
 
 if ((${#targets[@]} == 0)); then
-    targets=(unit_tests browser_tests)
-    unit_filter='EvoShell*:*EvoSpaceTheme*'
-    browser_filter='EvoShellUIBrowserTest.*'
+    if [[ -n "${unit_filter}" ]]; then
+        targets+=(unit_tests)
+    fi
+    if [[ -n "${browser_filter}" ]]; then
+        targets+=(browser_tests)
+    fi
+    if ((${#targets[@]} == 0)); then
+        targets=(unit_tests browser_tests)
+        unit_filter='EvoShell*:*EvoSpaceTheme*'
+        browser_filter='EvoShellUIBrowserTest.*'
+    fi
+fi
+
+has_unit_target=0
+has_browser_target=0
+for target in "${targets[@]}"; do
+    [[ "${target}" == "unit_tests" ]] && has_unit_target=1
+    [[ "${target}" == "browser_tests" ]] && has_browser_target=1
+done
+if [[ -n "${unit_filter}" && "${has_unit_target}" != "1" ]]; then
+    echo "--unit-filter requires --target unit_tests." >&2
+    exit 2
+fi
+if [[ -n "${browser_filter}" && "${has_browser_target}" != "1" ]]; then
+    echo "--browser-filter requires --target browser_tests." >&2
+    exit 2
 fi
 
 lane_args=()

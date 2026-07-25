@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
 import json
+import os
 import plistlib
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -209,9 +211,7 @@ class BuildLaneTests(unittest.TestCase):
     def test_stale_lock_is_reclaimed_and_context_exit_releases_it(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir)
-            lock_dir = state_dir / "lock"
-            lock_dir.mkdir()
-            (lock_dir / "owner.json").write_text(
+            (state_dir / "owner.json").write_text(
                 json.dumps({"pid": 999_999, "command": "old build"}),
                 encoding="utf-8",
             )
@@ -219,43 +219,84 @@ class BuildLaneTests(unittest.TestCase):
             lock = build_lane.BuildLock(
                 state_dir,
                 {"command": "new build", "targetCommit": "abc"},
-                pid_is_alive=lambda _pid: False,
             )
             with lock:
-                owner = json.loads((lock_dir / "owner.json").read_text())
+                owner = json.loads((state_dir / "owner.json").read_text())
                 self.assertEqual(owner["command"], "new build")
                 self.assertEqual(owner["targetCommit"], "abc")
+                self.assertEqual(owner["pid"], os.getpid())
 
-            self.assertFalse(lock_dir.exists())
+            self.assertTrue((state_dir / "lane.lock").exists())
+            self.assertFalse((state_dir / "owner.json").exists())
 
     def test_live_lock_waits_and_reports_owner_before_acquiring(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir)
-            lock_dir = state_dir / "lock"
-            lock_dir.mkdir()
-            (lock_dir / "owner.json").write_text(
-                json.dumps({"pid": 1234, "command": "first build"}),
-                encoding="utf-8",
+            first = build_lane.BuildLock(
+                state_dir,
+                {
+                    "command": "first build",
+                    "requestingWorktree": "/tmp/first",
+                    "targetCommit": "abc123",
+                    "startTime": "2026-07-25T12:00:00Z",
+                },
             )
+            first.acquire()
             reports: list[str] = []
 
             def release_owner(_seconds: float) -> None:
-                (lock_dir / "owner.json").unlink()
-                lock_dir.rmdir()
+                first.release()
 
             lock = build_lane.BuildLock(
                 state_dir,
                 {"command": "second build"},
                 poll_interval=0,
-                pid_is_alive=lambda pid: pid == 1234,
                 sleeper=release_owner,
                 reporter=reports.append,
             )
             with lock:
-                self.assertTrue(lock_dir.exists())
+                self.assertTrue((state_dir / "lane.lock").exists())
 
             self.assertEqual(len(reports), 1)
             self.assertIn("first build", reports[0])
+            self.assertIn("PID", reports[0])
+            self.assertIn("abc123", reports[0])
+            self.assertIn("2026-07-25T12:00:00Z", reports[0])
+
+    def test_kernel_lock_remains_held_by_inherited_build_child(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir)
+            first = build_lane.BuildLock(
+                state_dir,
+                {
+                    "command": "child build",
+                    "requestingWorktree": "/tmp/first",
+                    "targetCommit": "abc",
+                    "startTime": "now",
+                },
+            )
+            first.acquire()
+            child = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(0.25)"],
+                pass_fds=first.pass_fds,
+            )
+            os.close(first.fileno())
+            first.file_descriptor = None
+            first.acquired = False
+            reports: list[str] = []
+            second = build_lane.BuildLock(
+                state_dir,
+                {"command": "next build"},
+                poll_interval=0.02,
+                reporter=reports.append,
+            )
+            started = time.monotonic()
+            with second:
+                elapsed = time.monotonic() - started
+            child.wait(timeout=2)
+
+            self.assertGreaterEqual(elapsed, 0.15)
+            self.assertTrue(reports)
 
     def test_checkout_is_restored_after_an_interrupted_operation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -286,6 +327,31 @@ class BuildLaneTests(unittest.TestCase):
             self.assertEqual(git(repo, "rev-parse", "HEAD"), second)
             self.assertIn("evo-build-lane-recovery", git(repo, "stash", "list"))
 
+    def test_checkout_recovery_journal_restores_after_coordinator_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            repo = base / "repo"
+            first, second = create_repo(repo)
+            journal = base / "checkout-recovery.json"
+            journal.write_text(
+                json.dumps(
+                    {
+                        "repository": str(repo.resolve()),
+                        "originalBranch": "main",
+                        "originalRevision": second,
+                        "targetRevision": first,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            git(repo, "checkout", "--detach", first)
+
+            build_lane.recover_checkout_from_journal(repo, journal)
+
+            self.assertEqual(git(repo, "branch", "--show-current"), "main")
+            self.assertEqual(git(repo, "rev-parse", "HEAD"), second)
+            self.assertFalse(journal.exists())
+
     def test_cache_rejects_changed_xcode_or_gn_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
@@ -298,9 +364,11 @@ class BuildLaneTests(unittest.TestCase):
                 json.dumps(
                     {
                         "toolchain": {
+                            "developerDir": "/Applications/Xcode-beta.app/Contents/Developer",
                             "xcodeVersion": "26.5",
                             "xcodeBuild": "17E999",
-                        }
+                        },
+                        "gnArgumentsHash": "stale",
                     }
                 ),
                 encoding="utf-8",
@@ -312,6 +380,7 @@ class BuildLaneTests(unittest.TestCase):
                 build_lane.validate_cache_identity(
                     out_dir,
                     args_file,
+                    developer_dir="/Applications/Xcode.app/Contents/Developer",
                     xcode_version="26.6",
                     xcode_build="17F113",
                 )
@@ -330,6 +399,7 @@ class BuildLaneTests(unittest.TestCase):
                 build_lane.validate_cache_identity(
                     out_dir,
                     args_file,
+                    developer_dir="/Applications/Xcode.app/Contents/Developer",
                     xcode_version="26.6",
                     xcode_build="17F113",
                 )
@@ -337,6 +407,7 @@ class BuildLaneTests(unittest.TestCase):
             build_lane.validate_cache_identity(
                 out_dir,
                 args_file,
+                developer_dir="/Applications/Xcode.app/Contents/Developer",
                 xcode_version="26.6",
                 xcode_build="17F113",
                 allow_migration=True,
@@ -358,6 +429,7 @@ class BuildLaneTests(unittest.TestCase):
                 build_lane.validate_cache_identity(
                     out_dir,
                     args_file,
+                    developer_dir="/Applications/Xcode.app/Contents/Developer",
                     xcode_version="26.6",
                     xcode_build="17F113",
                 )
@@ -371,6 +443,7 @@ class BuildLaneTests(unittest.TestCase):
             "completedBuildTargets": ["chrome"],
             "completedVerificationSuites": ["unit:A"],
             "verifiedForProduction": True,
+            "bundle": {"artifactSha256": "bundle-a"},
         }
         identity = {
             "chromiumRevision": "chromium-a",
@@ -386,6 +459,7 @@ class BuildLaneTests(unittest.TestCase):
             verification_suites=["browser:EvoShell*"],
             verified_for_production=False,
             timestamp="2026-07-25T12:00:00Z",
+            bundle={"artifactSha256": "bundle-a"},
         )
 
         self.assertEqual(
@@ -427,6 +501,33 @@ class BuildLaneTests(unittest.TestCase):
         self.assertEqual(result["completedVerificationSuites"], [])
         self.assertFalse(result["verifiedForProduction"])
 
+    def test_manifest_drops_production_verification_when_artifact_changes(self) -> None:
+        identity = {
+            "chromiumRevision": "chromium-a",
+            "runtimeRevision": "runtime-a",
+            "gnArgumentsHash": "args-a",
+            "toolchain": {"xcodeVersion": "26.6", "xcodeBuild": "17F113"},
+        }
+        previous = {
+            **identity,
+            "completedBuildTargets": ["chrome"],
+            "completedVerificationSuites": ["release"],
+            "verifiedForProduction": True,
+            "bundle": {"artifactSha256": "old"},
+        }
+
+        result = build_lane.next_manifest(
+            previous,
+            identity,
+            build_targets=["chrome"],
+            verification_suites=[],
+            verified_for_production=False,
+            timestamp="2026-07-25T12:00:00Z",
+            bundle={"artifactSha256": "new"},
+        )
+
+        self.assertFalse(result["verifiedForProduction"])
+
     def test_release_validation_requires_exact_verified_identity(self) -> None:
         manifest = {
             "chromiumRevision": "chromium-a",
@@ -464,6 +565,23 @@ class BuildLaneTests(unittest.TestCase):
 
         with self.assertRaisesRegex(build_lane.BuildLaneError, "production bundle"):
             build_lane.validate_production_bundle(manifest)
+
+    def test_release_artifact_fingerprint_rejects_mutated_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = Path(temp_dir) / "Evo Release.app"
+            contents = app / "Contents"
+            contents.mkdir(parents=True)
+            payload = contents / "payload.txt"
+            payload.write_text("verified\n", encoding="utf-8")
+            manifest = {
+                "bundle": {
+                    "artifactSha256": build_lane.artifact_sha256(app),
+                }
+            }
+            payload.write_text("changed after failed build\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(build_lane.BuildLaneError, "fingerprint"):
+                build_lane.validate_artifact_fingerprint(manifest, app)
 
     def test_release_root_must_be_clean_main_and_synced_with_origin(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -522,6 +640,7 @@ class BuildLaneTests(unittest.TestCase):
             self.assertEqual(metadata["version"], "150.0.7871.129")
             self.assertEqual(metadata["buildVersion"], "7871.129")
             self.assertTrue(metadata["signatureVerified"])
+            self.assertEqual(metadata["artifactSha256"], build_lane.artifact_sha256(app))
 
     def test_execute_lane_builds_feature_commit_in_canonical_output_and_restores(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -592,7 +711,10 @@ class BuildLaneTests(unittest.TestCase):
                 sys.executable,
                 "-c",
                 (
-                    "import json, os, pathlib, subprocess; "
+                    "import json, os, pathlib, shutil, subprocess; "
+                    "out = pathlib.Path(os.environ['EVO_OUT_DIR']); "
+                    "out.mkdir(parents=True, exist_ok=True); "
+                    "shutil.copy2(pathlib.Path.cwd() / 'evo' / 'args.gn', out / 'args.gn'); "
                     f"pathlib.Path({str(result_path)!r}).write_text(json.dumps({{"
                     "'cwd': str(pathlib.Path.cwd()), "
                     "'head': subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(), "
@@ -672,11 +794,12 @@ class BuildLaneTests(unittest.TestCase):
                 signed.append(app)
                 (app / "Contents" / "signed.txt").write_text("yes\n", encoding="utf-8")
 
+            signer(source_app)
+            expected_fingerprint = build_lane.artifact_sha256(source_app)
             build_lane.promote_app(
                 source_app,
-                out_dir,
                 install_app,
-                signer=signer,
+                expected_fingerprint=expected_fingerprint,
                 signature_verifier=lambda app: (
                     app / "Contents" / "signed.txt"
                 ).is_file(),
@@ -685,17 +808,71 @@ class BuildLaneTests(unittest.TestCase):
             self.assertEqual(
                 (install_app / "Contents" / "payload.txt").read_text(), "new\n"
             )
+            self.assertEqual(len(signed), 1)
             self.assertEqual(
-                (
-                    install_app
-                    / "Contents"
-                    / "Frameworks"
-                    / "libfeature.dylib"
-                ).read_text(),
+                build_lane.artifact_sha256(install_app), expected_fingerprint
+            )
+            self.assertEqual(list(install_app.parent.glob(".Evo.app.*")), [])
+
+    def test_release_packaging_binds_external_libraries_into_signed_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            out_dir = base / "out"
+            source_app = out_dir / "Evo.app"
+            (source_app / "Contents").mkdir(parents=True)
+            (source_app / "Contents" / "payload.txt").write_text(
+                "browser\n", encoding="utf-8"
+            )
+            (out_dir / "library.dylib").write_text("library\n", encoding="utf-8")
+            destination = out_dir / "Evo Release.app"
+
+            def signer(app: Path) -> None:
+                (app / "Contents" / "signed.txt").write_text("yes\n", encoding="utf-8")
+
+            fingerprint = build_lane.package_release_artifact(
+                source_app,
+                out_dir,
+                destination,
+                signer=signer,
+                signature_verifier=lambda app: (
+                    app / "Contents" / "signed.txt"
+                ).is_file(),
+            )
+
+            self.assertEqual(
+                (destination / "Contents" / "Frameworks" / "library.dylib").read_text(),
                 "library\n",
             )
-            self.assertEqual(len(signed), 1)
-            self.assertEqual(list(install_app.parent.glob(".Evo.app.*")), [])
+            self.assertEqual(fingerprint, build_lane.artifact_sha256(destination))
+
+    def test_dev_paths_reject_production_profile(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "lib" / "workspace.sh"
+        environment = os.environ.copy()
+        environment["EVO_DEV_PROFILE_DIR"] = str(
+            Path.home() / "Library" / "Application Support" / "Evo Chromium"
+        )
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1"; require_safe_dev_paths', "bash", str(script)],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=environment,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("production state", result.stderr)
+
+    def test_chromium_test_filter_requires_matching_target(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "test-chromium.sh"
+        result = subprocess.run(
+            ["bash", str(script), "--target", "chrome", "--unit-filter", "Fake.*"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("requires --target unit_tests", result.stderr)
 
 
 if __name__ == "__main__":
