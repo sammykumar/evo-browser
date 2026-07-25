@@ -24,8 +24,16 @@ require_directory() {
     fi
 }
 
+is_git_worktree_root() {
+    local path="$1"
+    local top_level
+    [[ -d "${path}" ]] || return 1
+    top_level="$(git -C "${path}" rev-parse --show-toplevel 2>/dev/null)" || return 1
+    [[ "$(cd "${path}" && pwd -P)" == "$(cd "${top_level}" && pwd -P)" ]]
+}
+
 require_git_repository() {
-    if ! git -C "$1" rev-parse --git-dir >/dev/null 2>&1; then
+    if ! is_git_worktree_root "$1"; then
         echo "$2 was not found at $1" >&2
         exit 1
     fi
@@ -41,14 +49,20 @@ canonical_chromium_src="${EVO_CANONICAL_CHROMIUM_SRC:-${canonical_workspace_root
 canonical_out_dir="${canonical_chromium_src}/$(manifest_value build.canonicalOutput)"
 chromium_src="${EVO_CHROMIUM_SRC:-${workspace_root}/${chromium_checkout_path}}"
 
+read_pinned_chromium_file() {
+    local relative_path="$1"
+    git -C "${canonical_chromium_src}" show \
+        "$(manifest_value chromium.evoRevision):${relative_path}"
+}
+
 default_runtime_dir="${workspace_root}/$(manifest_value components.runtime.path)"
-if [[ ! -d "${default_runtime_dir}" && "${workspace_root}" != "${canonical_workspace_root}" ]]; then
+if ! is_git_worktree_root "${default_runtime_dir}" && [[ "${workspace_root}" != "${canonical_workspace_root}" ]]; then
     default_runtime_dir="${canonical_workspace_root}/$(manifest_value components.runtime.path)"
 fi
 runtime_dir="${EVO_RUNTIME_DIR:-${default_runtime_dir}}"
 
 default_opencode_dir="${workspace_root}/$(manifest_value components.opencode.path)"
-if [[ ! -d "${default_opencode_dir}" && "${workspace_root}" != "${canonical_workspace_root}" ]]; then
+if ! is_git_worktree_root "${default_opencode_dir}" && [[ "${workspace_root}" != "${canonical_workspace_root}" ]]; then
     default_opencode_dir="${canonical_workspace_root}/$(manifest_value components.opencode.path)"
 fi
 opencode_dir="${EVO_OPENCODE_DIR:-${default_opencode_dir}}"

@@ -32,6 +32,116 @@ def create_repo(path: Path) -> tuple[str, str]:
 
 
 class BuildLaneTests(unittest.TestCase):
+    def test_workspace_shell_reads_pinned_chromium_source_from_canonical_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            primary = base / "primary"
+            feature = base / "feature"
+            (primary / "scripts" / "lib").mkdir(parents=True)
+            workspace_shell = Path(__file__).resolve().parents[1] / "lib" / "workspace.sh"
+            (primary / "scripts" / "lib" / "workspace.sh").write_text(
+                workspace_shell.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+
+            chromium = primary / "evo-chromium" / "src"
+            chromium.mkdir(parents=True)
+            git(chromium, "init", "-b", "main")
+            git(chromium, "config", "user.email", "test@example.com")
+            git(chromium, "config", "user.name", "Test User")
+            (chromium / "feature.cc").write_text("enabled by default\n", encoding="utf-8")
+            git(chromium, "add", "feature.cc")
+            git(chromium, "commit", "-m", "feature")
+            revision = git(chromium, "rev-parse", "HEAD")
+
+            (primary / "workspace.json").write_text(
+                json.dumps(
+                    {
+                        "chromium": {
+                            "checkoutPath": "evo-chromium/src",
+                            "evoRevision": revision,
+                        },
+                        "build": {"canonicalOutput": "out/Evo"},
+                        "components": {
+                            "runtime": {"path": "evo-runtime"},
+                            "opencode": {"path": "evo-opencode"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            git(primary, "init", "-b", "main")
+            git(primary, "config", "user.email", "test@example.com")
+            git(primary, "config", "user.name", "Test User")
+            git(primary, "add", "scripts/lib/workspace.sh", "workspace.json")
+            git(primary, "commit", "-m", "workspace")
+            git(primary, "worktree", "add", "-b", "feature", str(feature))
+
+            output = subprocess.check_output(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; read_pinned_chromium_file feature.cc',
+                    "bash",
+                    str(feature / "scripts" / "lib" / "workspace.sh"),
+                ],
+                text=True,
+            )
+
+            self.assertEqual(output, "enabled by default\n")
+
+    def test_workspace_shell_falls_back_from_empty_submodule_placeholders(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            primary = base / "primary"
+            feature = base / "feature"
+            (primary / "scripts" / "lib").mkdir(parents=True)
+            workspace_shell = Path(__file__).resolve().parents[1] / "lib" / "workspace.sh"
+            (primary / "scripts" / "lib" / "workspace.sh").write_text(
+                workspace_shell.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            (primary / "workspace.json").write_text(
+                json.dumps(
+                    {
+                        "chromium": {"checkoutPath": "evo-chromium/src"},
+                        "build": {"canonicalOutput": "out/Evo"},
+                        "components": {
+                            "runtime": {"path": "evo-runtime"},
+                            "opencode": {"path": "evo-opencode"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            git(primary, "init", "-b", "main")
+            git(primary, "config", "user.email", "test@example.com")
+            git(primary, "config", "user.name", "Test User")
+            git(primary, "add", "scripts/lib/workspace.sh", "workspace.json")
+            git(primary, "commit", "-m", "workspace")
+            git(primary, "worktree", "add", "-b", "feature", str(feature))
+
+            for component in ("evo-runtime", "evo-opencode"):
+                create_repo(primary / component)
+                (feature / component).mkdir()
+
+            output = subprocess.check_output(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; printf "%s\\n%s\\n" "$runtime_dir" "$opencode_dir"',
+                    "bash",
+                    str(feature / "scripts" / "lib" / "workspace.sh"),
+                ],
+                text=True,
+            ).splitlines()
+
+            self.assertEqual(
+                output,
+                [
+                    str((primary / "evo-runtime").resolve()),
+                    str((primary / "evo-opencode").resolve()),
+                ],
+            )
+
     def test_release_root_cli_reports_guard_failure_without_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir) / "repo"
