@@ -80,15 +80,19 @@ Production creation and installation are separate:
 ./scripts/install-production.sh
 ```
 
-The release command requires a clean local `main` exactly synchronized with
-`origin/main`, validates workspace pins, builds the pinned revisions, runs the
-workspace and focused Chromium suites, and records strict code-signing proof.
+The dedicated release command requires a clean local `main` exactly synchronized
+with `origin/main`, validates workspace pins, and runs its release scripts from
+an immutable snapshot of that revision. It builds the pinned revisions, runs the
+workspace and focused Chromium suites, and records strict code-signing proof;
+the generic lane command cannot mint production verification.
 
 The install command never runs Ninja or signs from mutable source. It rejects
 missing, stale, mismatched, or unverified artifacts; stages the exact signed
 release bundle; verifies its fingerprint and signature; and then uses a single
 macOS atomic exchange to replace `/Applications/Evo.app`. It does not launch Evo or
 read, reset, migrate, or modify the production profile.
+If post-exchange verification and rollback both fail, the old app is retained
+at the recovery path printed in the error instead of being deleted.
 
 ## Diagnostics and cleanup
 

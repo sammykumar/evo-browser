@@ -28,9 +28,33 @@ def _run(args: argparse.Namespace) -> int:
         build_targets=args.record_target,
         verification_suites=args.record_suite,
         bundle_path=args.bundle_path,
-        verified_for_production=args.verified_for_production,
         allow_cache_migration=args.allow_cache_migration,
-        require_release_root=args.require_release_root,
+    )
+
+
+def _release(args: argparse.Namespace) -> int:
+    root = args.workspace_root.resolve()
+    workspace = json.loads((root / "workspace.json").read_text(encoding="utf-8"))
+    canonical_root = build_lane.discover_primary_checkout(root)
+    canonical_chromium = (
+        canonical_root / workspace["chromium"]["checkoutPath"]
+    ).resolve()
+    out_dir = (canonical_chromium / workspace["build"]["canonicalOutput"]).resolve()
+    release = workspace["build"]["release"]
+    return build_lane.execute_lane(
+        requesting_root=root,
+        requesting_chromium=args.requesting_chromium,
+        runtime_dir=args.runtime_dir,
+        operation="build and verify release",
+        command=[
+            str(root / "scripts" / "lib" / "build-release-operation.sh"),
+            str(root),
+        ],
+        build_targets=release["requiredBuildTargets"],
+        verification_suites=release["requiredVerificationSuites"],
+        bundle_path=out_dir / "Evo Release.app",
+        verified_for_production=True,
+        require_release_root=True,
     )
 
 
@@ -145,11 +169,17 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--record-target", action="append", default=[])
     run.add_argument("--record-suite", action="append", default=[])
     run.add_argument("--bundle-path", type=Path)
-    run.add_argument("--verified-for-production", action="store_true")
     run.add_argument("--allow-cache-migration", action="store_true")
-    run.add_argument("--require-release-root", action="store_true")
     run.add_argument("command", nargs=argparse.REMAINDER)
     run.set_defaults(handler=_run)
+
+    release = subparsers.add_parser(
+        "release", help="build and verify the exact revisions pinned by main"
+    )
+    release.add_argument("--workspace-root", type=Path, required=True)
+    release.add_argument("--requesting-chromium", type=Path, required=True)
+    release.add_argument("--runtime-dir", type=Path, required=True)
+    release.set_defaults(handler=_release)
 
     release_root = subparsers.add_parser(
         "validate-release-root", help="verify main is clean and synchronized"

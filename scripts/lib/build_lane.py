@@ -539,6 +539,10 @@ def execute_lane(
     timestamp_factory: Callable[[], str] = utc_timestamp,
 ) -> int:
     """Execute one committed Chromium revision in the canonical build lane."""
+    if verified_for_production and not require_release_root:
+        raise BuildLaneError(
+            "Production verification is release-only and requires synchronized main."
+        )
     requesting_root = requesting_root.resolve()
     requesting_chromium = requesting_chromium.resolve()
     runtime_dir = runtime_dir.resolve()
@@ -591,8 +595,10 @@ def execute_lane(
             raise BuildLaneError(
                 "The Evo Runtime revision changed while waiting for the build lane."
             )
+        release_root_revision: str | None = None
         if require_release_root:
             validate_release_root(requesting_root)
+            release_root_revision = _git(requesting_root, "rev-parse", "HEAD")
             components = workspace_manifest.get("components", {})
             if target_revision != chromium_config.get("evoRevision"):
                 raise BuildLaneError(
@@ -708,15 +714,51 @@ def execute_lane(
                             return generated.returncode
 
                     lane_lock.update_phase(operation)
-                    completed = subprocess.run(
-                        list(command),
-                        cwd=canonical_chromium,
-                        env=environment,
-                        check=False,
-                        pass_fds=lane_lock.pass_fds,
-                    )
+                    if verified_for_production:
+                        if release_root_revision is None:
+                            raise BuildLaneError(
+                                "Release root revision was not captured under the lane lock."
+                            )
+                        with immutable_git_snapshot(
+                            requesting_root,
+                            release_root_revision,
+                            snapshot_parent,
+                            "workspace",
+                            pass_fds=lane_lock.pass_fds,
+                        ) as immutable_root:
+                            completed = subprocess.run(
+                                [
+                                    str(
+                                        immutable_root
+                                        / "scripts"
+                                        / "lib"
+                                        / "build-release-operation.sh"
+                                    ),
+                                    str(immutable_root),
+                                ],
+                                cwd=canonical_chromium,
+                                env=environment,
+                                check=False,
+                                pass_fds=lane_lock.pass_fds,
+                            )
+                    else:
+                        completed = subprocess.run(
+                            list(command),
+                            cwd=canonical_chromium,
+                            env=environment,
+                            check=False,
+                            pass_fds=lane_lock.pass_fds,
+                        )
                     if completed.returncode != 0:
                         return completed.returncode
+
+                    if require_release_root:
+                        validate_release_root(requesting_root)
+                        if _git(requesting_root, "rev-parse", "HEAD") != release_root_revision:
+                            raise BuildLaneError(
+                                "Main changed while the release was running; no production "
+                                "verification was recorded."
+                            )
 
                     identity: dict[str, object] = {
                         "chromiumRevision": target_revision,
@@ -1024,6 +1066,7 @@ def package_release_artifact(
     staging = destination_app.parent / f".{destination_app.name}.staging.{nonce}"
     swapped = False
     installed = False
+    preserve_staging = False
     try:
         copier(source_app, staging)
         frameworks = staging / "Contents" / "Frameworks"
@@ -1051,12 +1094,19 @@ def package_release_artifact(
         return fingerprint
     except BaseException:
         if swapped and staging.exists() and destination_app.exists():
-            exchanger(staging, destination_app)
+            try:
+                exchanger(staging, destination_app)
+            except BaseException as rollback_error:
+                preserve_staging = True
+                raise BuildLaneError(
+                    "Release packaging rollback failed; the previous bundle was "
+                    f"preserved at {staging}."
+                ) from rollback_error
         elif installed and destination_app.exists() and not staging.exists():
             os.replace(destination_app, staging)
         raise
     finally:
-        if staging.exists():
+        if staging.exists() and not preserve_staging:
             shutil.rmtree(staging, ignore_errors=True)
 
 
@@ -1082,6 +1132,7 @@ def promote_app(
     staging = install_app.parent / f".{install_app.name}.staging.{nonce}"
     swapped = False
     installed = False
+    preserve_staging = False
     try:
         copier(source_app, staging)
         if artifact_sha256(staging) != expected_fingerprint:
@@ -1106,10 +1157,17 @@ def promote_app(
             )
     except BaseException:
         if swapped and staging.exists() and install_app.exists():
-            exchanger(staging, install_app)
+            try:
+                exchanger(staging, install_app)
+            except BaseException as rollback_error:
+                preserve_staging = True
+                raise BuildLaneError(
+                    "Production rollback failed; the previous app was preserved at "
+                    f"{staging}."
+                ) from rollback_error
         elif installed and install_app.exists() and not staging.exists():
             os.replace(install_app, staging)
         raise
     finally:
-        if staging.exists():
+        if staging.exists() and not preserve_staging:
             shutil.rmtree(staging, ignore_errors=True)

@@ -34,6 +34,47 @@ def create_repo(path: Path) -> tuple[str, str]:
 
 
 class BuildLaneTests(unittest.TestCase):
+    def test_verified_manifest_requires_release_only_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            with self.assertRaisesRegex(build_lane.BuildLaneError, "release-only"):
+                build_lane.execute_lane(
+                    requesting_root=base,
+                    requesting_chromium=base,
+                    runtime_dir=base,
+                    operation="fake release",
+                    command=["/usr/bin/true"],
+                    verified_for_production=True,
+                    require_release_root=False,
+                )
+
+    def test_generic_cli_cannot_accept_production_verification_flags(self) -> None:
+        cli = Path(__file__).resolve().parents[1] / "evo-build-lane.py"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(cli),
+                "run",
+                "--requesting-root",
+                "/tmp/root",
+                "--requesting-chromium",
+                "/tmp/chromium",
+                "--runtime-dir",
+                "/tmp/runtime",
+                "--operation",
+                "fake",
+                "--verified-for-production",
+                "--",
+                "/usr/bin/true",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unrecognized arguments", result.stderr)
+
     def test_workspace_shell_reads_pinned_chromium_source_from_canonical_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
@@ -843,6 +884,94 @@ class BuildLaneTests(unittest.TestCase):
                 "library\n",
             )
             self.assertEqual(fingerprint, build_lane.artifact_sha256(destination))
+
+    def test_promotion_preserves_old_app_when_rollback_exchange_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            source = base / "source.app"
+            install = base / "Evo.app"
+            (source / "Contents").mkdir(parents=True)
+            (install / "Contents").mkdir(parents=True)
+            (source / "Contents" / "payload.txt").write_text("new\n")
+            (install / "Contents" / "payload.txt").write_text("old\n")
+            calls = 0
+
+            def exchange(first: Path, second: Path) -> None:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("rollback failed")
+                temporary = base / "exchange.tmp"
+                os.replace(first, temporary)
+                os.replace(second, first)
+                os.replace(temporary, second)
+
+            signature_calls = 0
+
+            def verifier(_app: Path) -> bool:
+                nonlocal signature_calls
+                signature_calls += 1
+                return signature_calls == 1
+
+            with self.assertRaisesRegex(build_lane.BuildLaneError, "preserved at"):
+                build_lane.promote_app(
+                    source,
+                    install,
+                    expected_fingerprint=build_lane.artifact_sha256(source),
+                    signature_verifier=verifier,
+                    exchanger=exchange,
+                )
+
+            recovery = list(base.glob(".Evo.app.staging.*"))
+            self.assertEqual(len(recovery), 1)
+            self.assertEqual(
+                (recovery[0] / "Contents" / "payload.txt").read_text(), "old\n"
+            )
+
+    def test_release_packaging_preserves_old_bundle_when_rollback_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            out_dir = base / "out"
+            source = out_dir / "Evo.app"
+            destination = out_dir / "Evo Release.app"
+            (source / "Contents").mkdir(parents=True)
+            (destination / "Contents").mkdir(parents=True)
+            (source / "Contents" / "payload.txt").write_text("new\n")
+            (destination / "Contents" / "payload.txt").write_text("old\n")
+            calls = 0
+
+            def exchange(first: Path, second: Path) -> None:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("rollback failed")
+                temporary = base / "exchange.tmp"
+                os.replace(first, temporary)
+                os.replace(second, first)
+                os.replace(temporary, second)
+
+            verification_calls = 0
+
+            def verifier(_app: Path) -> bool:
+                nonlocal verification_calls
+                verification_calls += 1
+                return verification_calls == 1
+
+            with self.assertRaisesRegex(build_lane.BuildLaneError, "preserved at"):
+                build_lane.package_release_artifact(
+                    source,
+                    out_dir,
+                    destination,
+                    signer=lambda _app: None,
+                    signature_verifier=verifier,
+                    exchanger=exchange,
+                )
+
+            recovery = list(out_dir.glob(".Evo Release.app.staging.*"))
+            self.assertEqual(len(recovery), 1)
+            self.assertEqual(
+                (recovery[0] / "Contents" / "payload.txt").read_text(), "old\n"
+            )
 
     def test_dev_paths_reject_production_profile(self) -> None:
         script = Path(__file__).resolve().parents[1] / "lib" / "workspace.sh"

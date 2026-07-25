@@ -20,21 +20,9 @@ if [[ "${actual_chromium}" != "${expected_chromium}" ]]; then
     exit 1
 fi
 
-python3 "${workspace_root}/scripts/evo-build-lane.py" run \
-    --requesting-root "${workspace_root}" \
+python3 "${workspace_root}/scripts/evo-build-lane.py" release \
+    --workspace-root "${workspace_root}" \
     --requesting-chromium "${chromium_src}" \
-    --runtime-dir "${runtime_dir}" \
-    --operation "build and verify release" \
-    --record-target chrome \
-    --record-target unit_tests \
-    --record-target browser_tests \
-    --record-suite workspace \
-    --record-suite 'unit:EvoShell*:*EvoSpaceTheme*' \
-    --record-suite 'browser:EvoShellUIBrowserTest.*' \
-    --record-suite 'codesign:strict' \
-    --verified-for-production \
-    --require-release-root \
-    --bundle-path "${canonical_out_dir}/Evo Release.app" \
-    -- "${workspace_root}/scripts/lib/build-release-operation.sh" "${workspace_root}"
+    --runtime-dir "${runtime_dir}"
 
 echo "Verified production artifact: ${canonical_out_dir}/Evo Release.app"
