@@ -48,6 +48,24 @@ Before editing, run `git status` in the relevant repository. A clean root does
 not imply clean component repositories. Commit component work in its owning
 repository before updating the root pointer or Chromium patch series.
 
+## Shared Chromium build lane
+
+All supported Chromium builds use the primary checkout's persistent
+`evo-chromium/src/out/Evo`. A feature worktree is an editing surface, not a
+build-output owner. Commit its Chromium changes first, then use the root
+scripts; the coordinator temporarily builds that commit in the primary
+checkout under a machine-wide lock and restores the checkout afterward.
+
+- Never run `autoninja`, `gn gen`, or `evo/*.sh` directly from a feature
+  Chromium worktree during normal development.
+- Never create or use a feature worktree's `out/` directory.
+- Use `./scripts/migrate-build-cache.sh` only for an intentional pinned Xcode or
+  `evo/args.gn` migration. Ordinary commands refuse incompatible caches.
+- Do not remove a noncanonical cache until a canonical Evo Dev build has passed
+  smoke verification.
+- `./scripts/install-production.sh` promotes an already verified artifact and
+  must never compile Chromium.
+
 ## Pinned architecture
 
 `workspace.json` is the source of truth for Chromium's base and expected Evo
@@ -66,13 +84,17 @@ Chromium's official remote.
 ./scripts/test.sh
 ./scripts/build-dev.sh
 ./scripts/run-dev.sh
+./scripts/test-chromium.sh
+./scripts/migrate-build-cache.sh
+./scripts/build-release.sh
 ./scripts/install-production.sh
 ./scripts/export-chromium-patches.sh
 ./scripts/apply-chromium-patches.sh
 ```
 
-`EVO_CHROMIUM_SRC`, `EVO_RUNTIME_DIR`, `EVO_OPENCODE_DIR`, and
-`DEPOT_TOOLS_DIR` may override local paths.
+`EVO_CHROMIUM_SRC`, `EVO_CANONICAL_CHROMIUM_SRC`, `EVO_RUNTIME_DIR`,
+`EVO_OPENCODE_DIR`, `DEPOT_TOOLS_DIR`, and `EVO_BUILD_STATE_DIR` may override
+local paths for diagnosis and script tests.
 
 ## Development and production policy
 
@@ -83,6 +105,8 @@ Chromium's official remote.
 - Development launches use Chromium's mock keychain.
 - Sam alone promotes and tests `/Applications/Evo.app` with the persistent
   `Evo Chromium` production profile.
+- Agents do not run `build-release.sh` or `install-production.sh`; Sam owns
+  production artifact verification and promotion.
 - Never delete, reset, migrate, or automate the production profile.
 
 ## AI safety boundary

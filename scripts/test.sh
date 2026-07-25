@@ -3,11 +3,16 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/workspace.sh"
 
+PYTHONPATH="${workspace_root}${PYTHONPATH:+:${PYTHONPATH}}" python3 -m unittest discover \
+    -s "${workspace_root}/scripts/tests" \
+    -p 'test_*.py' \
+    -v
+
 "${workspace_root}/scripts/check-workspace.sh"
 
-if ! rg -q \
-    'BASE_FEATURE\(kEvoHybridBrowserShell, base::FEATURE_ENABLED_BY_DEFAULT\)' \
-    "${chromium_src}/chrome/browser/ui/evo_shell/evo_shell_features.cc"; then
+if ! read_pinned_chromium_file \
+    "chrome/browser/ui/evo_shell/evo_shell_features.cc" | rg -q \
+    'BASE_FEATURE\(kEvoHybridBrowserShell, base::FEATURE_ENABLED_BY_DEFAULT\)'; then
     echo "Production promotion requires EvoHybridBrowserShell to be enabled by default." >&2
     exit 1
 fi

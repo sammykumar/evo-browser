@@ -7,6 +7,27 @@
     "patchDirectory": "patches/chromium",
     "patchCount": 32
   },
+  "build": {
+    "canonicalOutput": "out/Evo",
+    "xcode": {
+      "developerDir": "/Applications/Xcode.app/Contents/Developer",
+      "version": "26.6",
+      "build": "17F113"
+    },
+    "release": {
+      "requiredBuildTargets": [
+        "browser_tests",
+        "chrome",
+        "unit_tests"
+      ],
+      "requiredVerificationSuites": [
+        "browser:EvoShellUIBrowserTest.*",
+        "codesign:strict",
+        "unit:EvoShell*:*EvoSpaceTheme*",
+        "workspace"
+      ]
+    }
+  },
   "components": {
     "runtime": {
       "path": "evo-runtime",
