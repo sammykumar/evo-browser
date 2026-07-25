@@ -1,7 +1,7 @@
 From c3b57df4762ee6bd29d5e822faf6d95ab753095d Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Fri, 24 Jul 2026 06:14:29 -0500
-Subject: [PATCH 31/35] evo: complete persistent per-Space theming
+Subject: [PATCH 31/37] evo: complete persistent per-Space theming
 
 ---
  chrome/browser/resources/evo_shell/surface.ts |  14 +-

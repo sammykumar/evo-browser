@@ -1,7 +1,7 @@
 From 9b7ca18e3605a033cd1ddb85a50bc1088f00f603 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Mon, 20 Jul 2026 17:22:04 -0500
-Subject: [PATCH 22/35] evo: place native controls in hybrid shell
+Subject: [PATCH 22/37] evo: place native controls in hybrid shell
 
 ---
  .../ui/views/frame/browser_frame_view_mac.mm      | 15 +++++++++++++++

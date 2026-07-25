@@ -1,7 +1,7 @@
 From 813a88563288827e74f9c11f3e7e1feb7fa16624 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 18 Jul 2026 21:08:37 -0500
-Subject: [PATCH 11/35] Fix macOS Sidekick command routing
+Subject: [PATCH 11/37] Fix macOS Sidekick command routing
 
 ---
  chrome/browser/resources/evo_ai/evo_ai.ts     | 11 +++-
