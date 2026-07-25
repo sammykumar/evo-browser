@@ -104,6 +104,11 @@ def _promote(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_release_root(args: argparse.Namespace) -> int:
+    build_lane.validate_release_root(args.workspace_root.resolve())
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
@@ -120,6 +125,12 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--allow-cache-migration", action="store_true")
     run.add_argument("command", nargs=argparse.REMAINDER)
     run.set_defaults(handler=_run)
+
+    release_root = subparsers.add_parser(
+        "validate-release-root", help="verify main is clean and synchronized"
+    )
+    release_root.add_argument("--workspace-root", type=Path, required=True)
+    release_root.set_defaults(handler=_validate_release_root)
 
     promote = subparsers.add_parser(
         "promote", help="install an already verified production artifact"

@@ -32,6 +32,30 @@ def create_repo(path: Path) -> tuple[str, str]:
 
 
 class BuildLaneTests(unittest.TestCase):
+    def test_release_root_cli_reports_guard_failure_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "repo"
+            create_repo(repo)
+            git(repo, "checkout", "-b", "feature")
+            cli = Path(__file__).resolve().parents[1] / "evo-build-lane.py"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(cli),
+                    "validate-release-root",
+                    "--workspace-root",
+                    str(repo),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("Release builds require the main branch", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_discovers_primary_checkout_from_a_linked_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)

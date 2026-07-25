@@ -9,9 +9,8 @@ if (($#)); then
 fi
 
 git -C "${workspace_root}" fetch --quiet origin main
-PYTHONPATH="${workspace_root}" python3 -c \
-    'import pathlib, sys; from scripts.lib import build_lane; build_lane.validate_release_root(pathlib.Path(sys.argv[1]))' \
-    "${workspace_root}"
+python3 "${workspace_root}/scripts/evo-build-lane.py" validate-release-root \
+    --workspace-root "${workspace_root}"
 "${workspace_root}/scripts/check-workspace.sh"
 
 expected_chromium="$(manifest_value chromium.evoRevision)"
