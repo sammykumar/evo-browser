@@ -1,7 +1,7 @@
 From c9fb0671be95b2446d6f050ac99c007ab6fbeaee Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 25 Jul 2026 17:22:32 -0500
-Subject: [PATCH 38/41] test: cover late Evo shell readiness
+Subject: [PATCH 38/43] test: cover late Evo shell readiness
 
 ---
  .../webui/evo_shell/evo_shell_browsertest.cc   | 18 ++++++++++++++++++

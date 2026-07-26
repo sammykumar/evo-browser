@@ -1,7 +1,7 @@
 From 5790084fb0c897f484eff7b2df658c62c598d123 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 25 Jul 2026 17:24:09 -0500
-Subject: [PATCH 39/41] fix: recover Evo shell after readiness timeout
+Subject: [PATCH 39/43] fix: recover Evo shell after readiness timeout
 
 ---
  chrome/browser/ui/views/frame/evo_shell_host_view.cc | 10 +++++++++-

@@ -1,7 +1,7 @@
 From 205d06109e4d5757498ebda5defd6c39a4907d4d Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 25 Jul 2026 15:49:05 -0500
-Subject: [PATCH 33/41] test: cover Evo toolbar native hit testing
+Subject: [PATCH 33/43] test: cover Evo toolbar native hit testing
 
 ---
  .../frame/evo_shell_interactive_uitest.cc     | 54 +++++++++++++++++++

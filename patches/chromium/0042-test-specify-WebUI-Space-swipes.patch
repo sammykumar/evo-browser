@@ -1,0 +1,88 @@
+From 228c45936ddcf4e2df2a4d7c0a51344339abf1fe Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sun, 26 Jul 2026 06:41:11 -0500
+Subject: [PATCH 42/43] test: specify WebUI Space swipes
+
+---
+ .../evo_shell/evo_shell_components_test.ts    | 61 +++++++++++++++++++
+ 1 file changed, 61 insertions(+)
+
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+index a2aefaa788d8ebf4b13d13da6d008da5cea5ec79..25df84a1abce05a0e30537a55d4deeb8db65faaf 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
++++ b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+@@ -35,6 +35,18 @@ function snapshot(): EvoShellSnapshot {
+   };
+ }
+ 
++function wheel(
++    target: HTMLElement, deltaX: number, deltaY = 0): WheelEvent {
++  const event = new WheelEvent('wheel', {
++    deltaX,
++    deltaY,
++    bubbles: true,
++    cancelable: true,
++  });
++  target.dispatchEvent(event);
++  return event;
++}
++
+ suite('EvoShellComponents', () => {
+   test('SpaceHeaderUsesActiveAccentAndProfileBadge', () => {
+     const view = sidebar(snapshot(), () => {});
+@@ -145,6 +157,55 @@ suite('EvoShellComponents', () => {
+     assertEquals('selectSpace', actions[1]!.type);
+   });
+ 
++  test('SidebarSwipeAccumulatesToNextSpace', () => {
++    const actions: EvoShellAction[] = [];
++    const view = sidebar(snapshot(), action => actions.push(action));
++    wheel(view, 40);
++    assertEquals(0, actions.length);
++    const threshold = wheel(view, 41);
++    assertTrue(threshold.defaultPrevented);
++    assertEquals('selectSpace', actions[0]!.type);
++    assertEquals('work', (actions[0] as {
++      type: 'selectSpace',
++      spaceId: string,
++    }).spaceId);
++  });
++
++  test('SidebarSwipeRightSelectsPreviousSpace', () => {
++    const state = snapshot();
++    state.activeSpaceId = 'work';
++    const actions: EvoShellAction[] = [];
++    const view = sidebar(state, action => actions.push(action));
++    wheel(view, -81);
++    assertEquals('default', (actions[0] as {
++      type: 'selectSpace',
++      spaceId: string,
++    }).spaceId);
++  });
++
++  test('SidebarSwipeClampsAtSpaceEnds', () => {
++    const actions: EvoShellAction[] = [];
++    const view = sidebar(snapshot(), action => actions.push(action));
++    wheel(view, -81);
++    assertEquals(0, actions.length);
++  });
++
++  test('SidebarSwipeLeavesVerticalScrollAlone', () => {
++    const actions: EvoShellAction[] = [];
++    const view = sidebar(snapshot(), action => actions.push(action));
++    const event = wheel(view, 40, 60);
++    assertFalse(event.defaultPrevented);
++    assertEquals(0, actions.length);
++  });
++
++  test('SidebarSwipeSelectsOnlyOncePerBurst', () => {
++    const actions: EvoShellAction[] = [];
++    const view = sidebar(snapshot(), action => actions.push(action));
++    wheel(view, 81);
++    wheel(view, 81);
++    assertEquals(1, actions.length);
++  });
++
+   test('RailIsDataDrivenAndHasOneActiveItem', () => {
+     const actions: EvoShellAction[] = [];
+     const view = rightRail(snapshot(), action => actions.push(action));

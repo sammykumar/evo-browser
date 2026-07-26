@@ -1,0 +1,101 @@
+From 2093f7186654dd0aa5db887b6eb0b013dce4a6cd Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sun, 26 Jul 2026 06:44:11 -0500
+Subject: [PATCH 43/43] feat: switch Spaces from WebUI trackpad swipes
+
+---
+ chrome/browser/resources/evo_shell/BUILD.gn   |  1 +
+ .../resources/evo_shell/components/sidebar.ts |  4 ++
+ .../evo_shell/components/space_swipe.ts       | 50 +++++++++++++++++++
+ 3 files changed, 55 insertions(+)
+ create mode 100644 chrome/browser/resources/evo_shell/components/space_swipe.ts
+
+diff --git a/chrome/browser/resources/evo_shell/BUILD.gn b/chrome/browser/resources/evo_shell/BUILD.gn
+index a4aa17587cfd3721e6ae24cba46f1c5a0fdf9312..59eab3f13f0084f0824df5646d450695d6e18656 100644
+--- a/chrome/browser/resources/evo_shell/BUILD.gn
++++ b/chrome/browser/resources/evo_shell/BUILD.gn
+@@ -23,6 +23,7 @@ build_webui("build") {
+     "components/section_label.ts",
+     "components/sidebar.ts",
+     "components/space_header.ts",
++    "components/space_swipe.ts",
+     "components/space_switcher.ts",
+     "components/tab_item.ts",
+     "components/toolbar.ts",
+diff --git a/chrome/browser/resources/evo_shell/components/sidebar.ts b/chrome/browser/resources/evo_shell/components/sidebar.ts
+index e3ddcced61296a4cbeb5d6638777d46fcae87149..ed2421497b27d3cbcd09a8734b52d23d000d5afd 100644
+--- a/chrome/browser/resources/evo_shell/components/sidebar.ts
++++ b/chrome/browser/resources/evo_shell/components/sidebar.ts
+@@ -5,6 +5,7 @@ import {favoritesGrid} from './favorites_grid.js';
+ import {folderRow} from './list_row.js';
+ import {sectionLabel} from './section_label.js';
+ import {spaceHeader} from './space_header.js';
++import {installSpaceSwipe} from './space_swipe.js';
+ import {spaceSwitcher} from './space_switcher.js';
+ import {tabItem} from './tab_item.js';
+ import type {EvoShellAction, EvoShellSnapshot} from '../types.js';
+@@ -75,5 +76,8 @@ export function sidebar(
+   shell.append(spaceSwitcher(
+       snapshot.spaces, snapshot.activeSpaceId,
+       spaceId => dispatch({type: 'selectSpace', spaceId})));
++  installSpaceSwipe(
++      shell, snapshot.spaces, snapshot.activeSpaceId,
++      spaceId => dispatch({type: 'selectSpace', spaceId}));
+   return shell;
+ }
+diff --git a/chrome/browser/resources/evo_shell/components/space_swipe.ts b/chrome/browser/resources/evo_shell/components/space_swipe.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2abb68aa657fdd990f4ff9e08775f193ca0a5457
+--- /dev/null
++++ b/chrome/browser/resources/evo_shell/components/space_swipe.ts
+@@ -0,0 +1,50 @@
++// Copyright 2026 SK Productions LLC
++
++import type {EvoShellSpace} from '../types.js';
++
++const THRESHOLD = 80;
++const IDLE_RESET_MS = 180;
++
++export function installSpaceSwipe(
++    element: HTMLElement, spaces: readonly EvoShellSpace[],
++    activeSpaceId: string, onSelect: (spaceId: string) => void): void {
++  let horizontal = 0;
++  let vertical = 0;
++  let triggered = false;
++  let resetTimer: number|undefined;
++
++  const reset = () => {
++    horizontal = 0;
++    vertical = 0;
++    triggered = false;
++    resetTimer = undefined;
++  };
++
++  element.addEventListener('wheel', event => {
++    if (resetTimer !== undefined) {
++      window.clearTimeout(resetTimer);
++    }
++    resetTimer = window.setTimeout(reset, IDLE_RESET_MS);
++    horizontal += event.deltaX;
++    vertical += Math.abs(event.deltaY);
++
++    if (Math.abs(horizontal) <= vertical) {
++      return;
++    }
++    event.preventDefault();
++    if (triggered || Math.abs(horizontal) < THRESHOLD) {
++      return;
++    }
++    triggered = true;
++
++    const activeIndex = spaces.findIndex(space => space.id === activeSpaceId);
++    if (activeIndex < 0) {
++      return;
++    }
++    const direction = horizontal > 0 ? 1 : -1;
++    const target = spaces[activeIndex + direction];
++    if (target) {
++      onSelect(target.id);
++    }
++  }, {passive: false});
++}

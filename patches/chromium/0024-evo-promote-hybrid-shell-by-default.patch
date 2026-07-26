@@ -1,7 +1,7 @@
 From 6d8f1c3b37e053257db2b93c7fd8bf2ecca0b48e Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Tue, 21 Jul 2026 05:54:46 -0500
-Subject: [PATCH 24/41] evo: promote hybrid shell by default
+Subject: [PATCH 24/43] evo: promote hybrid shell by default
 
 ---
  chrome/browser/ui/evo_shell/evo_shell_features.cc | 2 +-

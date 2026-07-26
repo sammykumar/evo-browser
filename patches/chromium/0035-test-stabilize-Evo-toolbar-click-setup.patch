@@ -1,7 +1,7 @@
 From 4adcded6bbaf7b574fd2ca6584277ef80fe00e6b Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sat, 25 Jul 2026 16:42:00 -0500
-Subject: [PATCH 35/41] test: stabilize Evo toolbar click setup
+Subject: [PATCH 35/43] test: stabilize Evo toolbar click setup
 
 ---
  .../browser/ui/views/frame/evo_shell_interactive_uitest.cc  | 6 ++++--

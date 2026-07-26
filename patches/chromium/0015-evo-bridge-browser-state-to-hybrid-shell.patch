@@ -1,7 +1,7 @@
 From d7d229aa7768eb0155d111b628d9be4c36b0bdee Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sun, 19 Jul 2026 16:14:10 -0500
-Subject: [PATCH 15/41] evo: bridge browser state to hybrid shell
+Subject: [PATCH 15/43] evo: bridge browser state to hybrid shell
 
 ---
  chrome/browser/prefs/browser_prefs.cc         |   2 +

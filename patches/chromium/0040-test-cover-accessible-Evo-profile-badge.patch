@@ -1,7 +1,7 @@
 From c3d0bcb4feb9e62508a5ef2b78212ace955c3b46 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Sun, 26 Jul 2026 05:45:02 -0500
-Subject: [PATCH 40/41] test: cover accessible Evo profile badge
+Subject: [PATCH 40/43] test: cover accessible Evo profile badge
 
 ---
  chrome/test/data/webui/evo_shell/evo_shell_components_test.ts | 1 +
