@@ -1,0 +1,24 @@
+From 4de8ad9153e76a014b37540801ea63da7accb1cc Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sat, 25 Jul 2026 17:06:12 -0500
+Subject: [PATCH 37/43] fix: keep Space swipes inside Evo shell
+
+---
+ chrome/browser/resources/evo_shell/evo_shell.css | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/chrome/browser/resources/evo_shell/evo_shell.css b/chrome/browser/resources/evo_shell/evo_shell.css
+index e63eb5133573f029410a921cf3687821ab29fd6d..b4ce763f202112ae966c2fa809d2f459f1e33934 100644
+--- a/chrome/browser/resources/evo_shell/evo_shell.css
++++ b/chrome/browser/resources/evo_shell/evo_shell.css
+@@ -13,6 +13,10 @@ body,
+   margin: 0;
+ }
+ 
++html {
++  overscroll-behavior-x: none;
++}
++
+ body {
+   overflow: hidden;
+   color: var(--ink-1);

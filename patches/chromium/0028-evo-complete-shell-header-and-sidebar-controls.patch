@@ -1,7 +1,7 @@
 From ea112285be111f46de33fa895982851a15b88edf Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Fri, 24 Jul 2026 05:24:11 -0500
-Subject: [PATCH 28/35] evo: complete shell header and sidebar controls
+Subject: [PATCH 28/43] evo: complete shell header and sidebar controls
 
 ---
  .../resources/evo_shell/components/badge.ts   |  6 ++---

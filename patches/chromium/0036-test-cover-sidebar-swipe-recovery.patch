@@ -1,0 +1,36 @@
+From e64f2f0735fa4d5cef2ba64d4e09ff106a0fbf72 Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sat, 25 Jul 2026 17:04:09 -0500
+Subject: [PATCH 36/43] test: cover sidebar swipe recovery
+
+---
+ .../webui/evo_shell/evo_shell_browsertest.cc     | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+index 0d7599eeb4e7dc33483240ec0101c9700a65fe74..6f5bb29274ad4f5667d120faa711bc5eda4c3df4 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
++++ b/chrome/test/data/webui/evo_shell/evo_shell_browsertest.cc
+@@ -231,6 +231,22 @@ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
+   )"));
+ }
+ 
++IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
++                       SidebarSuppressesHistoryNavigationSwipe) {
++  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
++  ASSERT_TRUE(browser_view);
++  auto* host = browser_view->evo_shell_host_for_testing();
++  ASSERT_TRUE(host);
++  content::WebContents* sidebar =
++      host->sidebar_web_view_for_testing()->GetWebContents();
++  ASSERT_TRUE(sidebar);
++  ASSERT_TRUE(content::WaitForLoadStop(sidebar));
++
++  EXPECT_EQ("none", content::EvalJs(sidebar, R"(
++    getComputedStyle(document.documentElement).overscrollBehaviorX
++  )"));
++}
++
+ IN_PROC_BROWSER_TEST_F(EvoShellUIBrowserTest,
+                        ExternalSpaceFocusAppliesNamedTheme) {
+   TabStripModel* model = browser()->tab_strip_model();

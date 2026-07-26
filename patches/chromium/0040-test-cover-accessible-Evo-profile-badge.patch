@@ -1,0 +1,21 @@
+From c3d0bcb4feb9e62508a5ef2b78212ace955c3b46 Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sun, 26 Jul 2026 05:45:02 -0500
+Subject: [PATCH 40/43] test: cover accessible Evo profile badge
+
+---
+ chrome/test/data/webui/evo_shell/evo_shell_components_test.ts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+index ad2037448fff5d364e543a13e16c41633e562f1c..a2aefaa788d8ebf4b13d13da6d008da5cea5ec79 100644
+--- a/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
++++ b/chrome/test/data/webui/evo_shell/evo_shell_components_test.ts
+@@ -41,6 +41,7 @@ suite('EvoShellComponents', () => {
+     assertTrue(view.querySelector('.space-avatar') !== null);
+     assertEquals(
+         'Default', view.querySelector('.profile-badge')!.textContent);
++    assertFalse(view.querySelector('.profile-badge')!.hasAttribute('aria-label'));
+   });
+ 
+   test('ResolvedThemeOverridesAccentProperties', () => {

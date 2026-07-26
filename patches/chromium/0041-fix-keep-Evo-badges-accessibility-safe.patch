@@ -1,0 +1,52 @@
+From 87c33e85270381d20b27fbe96ef6255be9298dd6 Mon Sep 17 00:00:00 2001
+From: Sam Kumar <sammy.kumar@icloud.com>
+Date: Sun, 26 Jul 2026 05:53:02 -0500
+Subject: [PATCH 41/43] fix: keep Evo badges accessibility-safe
+
+---
+ chrome/browser/resources/evo_shell/components/badge.ts         | 3 +--
+ chrome/browser/resources/evo_shell/components/space_header.ts  | 2 +-
+ .../browser/resources/evo_shell/components/space_switcher.ts   | 2 +-
+ 3 files changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/chrome/browser/resources/evo_shell/components/badge.ts b/chrome/browser/resources/evo_shell/components/badge.ts
+index 21f56f2c8875a78c2b6d592239a8df896706b164..894e187b61ab3f245fbbab8537de83382e1da995 100644
+--- a/chrome/browser/resources/evo_shell/components/badge.ts
++++ b/chrome/browser/resources/evo_shell/components/badge.ts
+@@ -1,9 +1,8 @@
+ // Copyright 2026 SK Productions LLC
+ 
+-export function badge(label: string, ariaLabel?: string): HTMLSpanElement {
++export function badge(label: string): HTMLSpanElement {
+   const element = document.createElement('span');
+   element.className = 'badge';
+   element.textContent = label;
+-  element.setAttribute('aria-label', ariaLabel || label);
+   return element;
+ }
+diff --git a/chrome/browser/resources/evo_shell/components/space_header.ts b/chrome/browser/resources/evo_shell/components/space_header.ts
+index e6bb2044d251b124c19481640dde2f40c90c6ffd..326bfa38ba9dde3a541cf476c63fafd8ca35bd3a 100644
+--- a/chrome/browser/resources/evo_shell/components/space_header.ts
++++ b/chrome/browser/resources/evo_shell/components/space_header.ts
+@@ -15,7 +15,7 @@ export function spaceHeader(
+   avatar.setAttribute('aria-hidden', 'true');
+   const title = document.createElement('strong');
+   title.textContent = space?.name || 'Agent';
+-  const profileBadge = badge('Default', 'Default profile');
++  const profileBadge = badge('Default');
+   profileBadge.classList.add('profile-badge');
+   identity.append(avatar, title, profileBadge);
+   header.append(identity, iconButton('panel-left', 'Collapse sidebar', onCollapse));
+diff --git a/chrome/browser/resources/evo_shell/components/space_switcher.ts b/chrome/browser/resources/evo_shell/components/space_switcher.ts
+index 08488a7ada8b5961fbb319a8036e685adcc3f07b..edbf0b2e5d2ae0ac7a176c6f9138d23302317f58 100644
+--- a/chrome/browser/resources/evo_shell/components/space_switcher.ts
++++ b/chrome/browser/resources/evo_shell/components/space_switcher.ts
+@@ -21,7 +21,7 @@ export function spaceSwitcher(
+     dot.className = 'space-dot';
+     button.append(dot);
+     if (space.badge) {
+-      button.append(badge(String(space.badge), `${space.badge} items`));
++      button.append(badge(String(space.badge)));
+     }
+     button.addEventListener('click', () => onSelect(space.id));
+     nav.append(button);

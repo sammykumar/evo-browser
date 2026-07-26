@@ -109,6 +109,17 @@ local paths for diagnosis and script tests.
   production artifact verification and promotion.
 - Never delete, reset, migrate, or automate the production profile.
 
+## Completed feature workflow
+
+Unless Sam explicitly says to keep a branch open or avoid integration, finishing
+Evo feature work means completing the full GitHub integration flow: push the
+feature branch, create a ready-for-review pull request to `main`, merge the pull
+request after required checks pass, switch the primary `evo-browser` checkout to
+`main`, and pull the merged result with fast-forward only. Do not stop after
+merely opening the pull request. Preserve externally managed worktrees until the
+merge is confirmed; remove one only when Sam asks or its cleanup is already in
+scope.
+
 ## AI safety boundary
 
 - Claude uses the official local CLI and the user's existing subscription.
