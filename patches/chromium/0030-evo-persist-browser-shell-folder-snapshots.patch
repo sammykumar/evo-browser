@@ -1,7 +1,7 @@
 From d49cd3aee164e0eb5590f93e59a3ab1a6b8ecfaa Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Fri, 24 Jul 2026 05:39:26 -0500
-Subject: [PATCH 30/39] evo: persist browser shell folder snapshots
+Subject: [PATCH 30/41] evo: persist browser shell folder snapshots
 
 ---
  .../ui/evo_shell/evo_shell_coordinator.cc     | 12 +---

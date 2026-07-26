@@ -1,7 +1,7 @@
 From d410270ed6df228eec1552264352e84565fdc3f4 Mon Sep 17 00:00:00 2001
 From: Sam Kumar <sammy.kumar@icloud.com>
 Date: Fri, 24 Jul 2026 06:39:09 -0500
-Subject: [PATCH 32/39] evo: open persisted folder links
+Subject: [PATCH 32/41] evo: open persisted folder links
 
 ---
  .../evo_shell/components/list_row.ts          |  7 ++--
