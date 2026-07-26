@@ -16,6 +16,7 @@ DEPOT_TOOLS_DIR="${DEPOT_TOOLS_DIR}" \
     --target browser_tests \
     --unit-filter 'EvoShell*:*EvoSpaceTheme*' \
     --browser-filter 'EvoShellUIBrowserTest.*'
+"${chromium_src}/evo/sign.sh" "${out_dir}/Evo.app"
 codesign --verify --deep --strict "${out_dir}/Evo.app"
 python3 "${workspace_root}/scripts/evo-build-lane.py" package-release \
     --source-app "${out_dir}/Evo.app" \

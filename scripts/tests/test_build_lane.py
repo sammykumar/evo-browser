@@ -49,6 +49,102 @@ def create_repo(path: Path) -> tuple[str, str]:
 
 
 class BuildLaneTests(unittest.TestCase):
+    def test_release_operation_resigns_source_after_browser_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            workspace = base / "workspace"
+            chromium = base / "chromium"
+            out_dir = base / "out"
+            bin_dir = base / "bin"
+            (workspace / "scripts" / "lib").mkdir(parents=True)
+            (chromium / "evo").mkdir(parents=True)
+            bin_dir.mkdir()
+
+            def executable(path: Path, source: str) -> None:
+                path.write_text(source, encoding="utf-8")
+                path.chmod(0o755)
+
+            executable(
+                chromium / "evo" / "sign.sh",
+                """#!/bin/sh
+set -eu
+app="$1"
+shasum -a 256 "$app/Contents/payload.txt" | cut -d ' ' -f 1 > "$app/Contents/signature.txt"
+""",
+            )
+            executable(
+                chromium / "evo" / "build.sh",
+                """#!/bin/sh
+set -eu
+mkdir -p "$EVO_OUT_DIR/Evo.app/Contents"
+printf 'browser\\n' > "$EVO_OUT_DIR/Evo.app/Contents/payload.txt"
+"$EVO_CANONICAL_CHROMIUM_SRC/evo/sign.sh" "$EVO_OUT_DIR/Evo.app"
+""",
+            )
+            executable(workspace / "scripts" / "test.sh", "#!/bin/sh\nexit 0\n")
+            executable(
+                workspace / "scripts" / "lib" / "run-chromium-tests.sh",
+                """#!/bin/sh
+set -eu
+printf 'relinked\\n' >> "$EVO_OUT_DIR/Evo.app/Contents/payload.txt"
+""",
+            )
+            executable(
+                bin_dir / "codesign",
+                """#!/bin/sh
+set -eu
+for last_arg do :; done
+actual=$(shasum -a 256 "$last_arg/Contents/payload.txt" | cut -d ' ' -f 1)
+expected=$(cat "$last_arg/Contents/signature.txt")
+test "$actual" = "$expected"
+""",
+            )
+            executable(
+                bin_dir / "python3",
+                """#!/bin/sh
+set -eu
+source_app=''
+destination_app=''
+sign_script=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --source-app) source_app="$2"; shift 2 ;;
+    --destination-app) destination_app="$2"; shift 2 ;;
+    --sign-script) sign_script="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cp -R "$source_app" "$destination_app"
+"$sign_script" "$destination_app"
+""",
+            )
+
+            operation = (
+                Path(__file__).resolve().parents[1]
+                / "lib"
+                / "build-release-operation.sh"
+            )
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "EVO_CANONICAL_CHROMIUM_SRC": str(chromium),
+                    "EVO_OUT_DIR": str(out_dir),
+                    "EVO_RUNTIME_DIR": str(base / "runtime"),
+                    "DEPOT_TOOLS_DIR": str(base / "depot_tools"),
+                    "PATH": f"{bin_dir}:{environment['PATH']}",
+                }
+            )
+            result = subprocess.run(
+                [str(operation), str(workspace)],
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((out_dir / "Evo Release.app").is_dir())
+
     def test_immutable_snapshot_preserves_workspace_dependency_links(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
